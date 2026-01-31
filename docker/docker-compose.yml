@@ -1,0 +1,109 @@
+version: "3.9"
+
+services:
+  # ==========================================================================
+  # PostgreSQL Database
+  # ==========================================================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: tsbot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tsbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tsbot_secret_password}
+      POSTGRES_DB: ${POSTGRES_DB:-tsbot_db}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tsbot} -d ${POSTGRES_DB:-tsbot_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tsbot-network
+
+  # ==========================================================================
+  # Qdrant Vector Database
+  # ==========================================================================
+  qdrant:
+    image: qdrant/qdrant:v1.12.0
+    container_name: tsbot-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+      QDRANT__LOG_LEVEL: INFO
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tsbot-network
+
+  # ==========================================================================
+  # pgAdmin - Database Management UI
+  # ==========================================================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: tsbot-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "5051:80"
+    depends_on:
+      - postgres
+    networks:
+      - tsbot-network
+
+  # ==========================================================================
+  # TSBot Application (Optional - for containerized deployment)
+  # ==========================================================================
+  tsbot:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: tsbot-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-tsbot}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-tsbot_secret_password}
+      - POSTGRES_DB=${POSTGRES_DB:-tsbot_db}
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+    volumes:
+      - ../data:/app/data
+    networks:
+      - tsbot-network
+    profiles:
+      - full  # Only start with: docker-compose --profile full up
+
+volumes:
+  postgres_data:
+    name: tsbot-postgres-data
+  qdrant_data:
+    name: tsbot-qdrant-data
+
+networks:
+  tsbot-network:
+    name: tsbot-network
+    driver: bridge
