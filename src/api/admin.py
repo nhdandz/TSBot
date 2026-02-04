@@ -195,6 +195,29 @@ async def create_truong(
     return {"id": truong.id, "message": "Thêm trường thành công"}
 
 
+# KhoiThi (Exam blocks) endpoints
+@router.get("/khoi-thi")
+async def list_khoi_thi(
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> list[dict]:
+    """List all exam blocks."""
+    result = await session.execute(
+        select(KhoiThi).where(KhoiThi.active == True).order_by(KhoiThi.ma_khoi)
+    )
+    khoi_list = result.scalars().all()
+
+    return [
+        {
+            "id": k.id,
+            "ma_khoi": k.ma_khoi,
+            "ten_khoi": k.ten_khoi,
+            "mon_hoc": k.mon_hoc,
+        }
+        for k in khoi_list
+    ]
+
+
 # Nganh (Program) endpoints
 @router.get("/nganh")
 async def list_nganh(

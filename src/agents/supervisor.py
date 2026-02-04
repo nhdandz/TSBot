@@ -23,7 +23,6 @@ class AgentType(str, Enum):
     SQL = "sql"
     RAG = "rag"
     GENERAL = "general"
-    FAQ = "faq"
 
 
 class ConversationState(TypedDict):
@@ -204,29 +203,87 @@ class SupervisorAgent:
         Returns:
             Updated state with routing decision.
         """
+        import traceback
+
+        print(f"[DEBUG] _route_node called")
+
         query = state["current_query"]
         messages = state.get("messages", [])
+        print(f"[DEBUG] Processing query: {query[:50]}...")
 
         # Try semantic router first for fast routing
         try:
+            print("[DEBUG] Calling semantic router...")
             route_result = await self.router.route(query)
-            if route_result["confidence"] > 0.85:
+            print(f"[DEBUG] Semantic router returned: {type(route_result)}, value={route_result}")
+
+            if route_result is None:
+                print("[DEBUG] Semantic router returned None")
+                raise ValueError("Router returned None")
+
+            print(f"[DEBUG] Route result keys: {list(route_result.keys()) if isinstance(route_result, dict) else 'not a dict'}")
+            intent = route_result.get("intent", "unknown")
+            confidence = route_result.get("confidence", 0.0)
+
+            print(f"[DEBUG] Semantic router result: intent={intent}, confidence={confidence:.3f}")
+
+            if confidence > 0.85:
+                # Complete mapping for all intents from intents.json
                 agent_mapping = {
+                    # SQL Agent - tra cứu điểm, chỉ tiêu
                     "score_lookup": AgentType.SQL,
-                    "regulation": AgentType.RAG,
-                    "faq": AgentType.FAQ,
+                    "score_check": AgentType.SQL,
+                    "quota_lookup": AgentType.SQL,
+
+                    # RAG Agent - quy định, tiêu chuẩn, thủ tục
+                    "regulation_health": AgentType.RAG,
+                    "regulation_politics": AgentType.RAG,
+                    "regulation_academic": AgentType.RAG,
+                    "regulation_age": AgentType.RAG,
+                    "procedure_registration": AgentType.RAG,
+                    "procedure_documents": AgentType.RAG,
+                    "procedure_exam": AgentType.RAG,
+                    "faq_benefits": AgentType.RAG,
+                    "faq_life": AgentType.RAG,
+                    "faq_career": AgentType.RAG,
+                    "faq_female": AgentType.RAG,
+                    "priority": AgentType.RAG,
+                    "school_info": AgentType.RAG,
+
+                    # General Agent - chào hỏi, về bot
                     "greeting": AgentType.GENERAL,
+                    "about_bot": AgentType.GENERAL,
+                    "unclear": AgentType.GENERAL,
+
+                    # Comparison - bắt đầu với SQL
+                    "comparison": AgentType.SQL,
                 }
-                agent_type = agent_mapping.get(route_result["intent"], AgentType.GENERAL)
+
+                # Get agent type, with smart fallback for unknown intents
+                agent_type = agent_mapping.get(intent)
+
+                if agent_type is None:
+                    # Fallback based on intent name pattern
+                    if intent.startswith("regulation_") or intent.startswith("procedure_") or intent.startswith("faq_"):
+                        agent_type = AgentType.RAG
+                    elif intent.startswith("score_") or intent.startswith("quota_"):
+                        agent_type = AgentType.SQL
+                    else:
+                        agent_type = AgentType.GENERAL
+                    logger.warning(f"Unknown intent '{intent}', falling back to {agent_type}")
+
+                logger.info(f"Routing to {agent_type} for intent '{intent}'")
 
                 return {
-                    "intent": route_result["intent"],
+                    "intent": intent,
                     "agent_type": agent_type,
                 }
         except Exception as e:
-            logger.warning(f"Semantic router failed: {e}")
+            print(f"[DEBUG] Semantic router failed: {e}")
+            print(f"[DEBUG] Traceback: {traceback.format_exc()}")
 
         # Fall back to LLM-based planning
+        print("[DEBUG] Falling back to LLM-based planning")
         history_text = "\n".join([
             f"{m['role']}: {m['content']}"
             for m in messages[-5:]  # Last 5 messages
@@ -235,18 +292,29 @@ class SupervisorAgent:
         prompt = PLANNING_PROMPT.format(query=query, history=history_text)
 
         try:
+            print("[DEBUG] Calling LLM generate_with_json...")
             response = await self.llm_service.generate_with_json(
                 prompt=prompt,
                 use_grader=True,
             )
+            print(f"[DEBUG] LLM response: {type(response)}, value={response}")
 
-            agent_str = response.get("agent", "general")
+            if response is None:
+                print("[DEBUG] LLM returned None response, defaulting to GENERAL")
+                return {
+                    "intent": "general",
+                    "agent_type": AgentType.GENERAL,
+                }
+
+            agent_str = response.get("agent", "general") if isinstance(response, dict) else "general"
             agent_type = {
                 "sql": AgentType.SQL,
                 "rag": AgentType.RAG,
                 "general": AgentType.GENERAL,
                 "clarification": None,  # Special case
             }.get(agent_str, AgentType.GENERAL)
+
+            print(f"[DEBUG] LLM planning result: agent={agent_str}, agent_type={agent_type}")
 
             return {
                 "intent": agent_str,
@@ -255,8 +323,10 @@ class SupervisorAgent:
             }
 
         except Exception as e:
-            logger.error(f"Planning failed: {e}")
+            print(f"[DEBUG] Planning failed: {e}")
+            print(f"[DEBUG] Traceback: {traceback.format_exc()}")
             return {
+                "intent": "general",
                 "agent_type": AgentType.GENERAL,
                 "error": str(e),
             }
@@ -271,15 +341,20 @@ class SupervisorAgent:
             Next node name.
         """
         if state.get("needs_clarification"):
+            logger.info("Decision: clarify (needs_clarification=True)")
             return "clarify"
 
         agent_type = state.get("agent_type")
+        intent = state.get("intent")
 
         if agent_type == AgentType.SQL:
+            logger.info(f"Decision: sql (intent={intent}, agent_type={agent_type})")
             return "sql"
         elif agent_type == AgentType.RAG:
+            logger.info(f"Decision: rag (intent={intent}, agent_type={agent_type})")
             return "rag"
         else:
+            logger.info(f"Decision: general (intent={intent}, agent_type={agent_type})")
             return "general"
 
     async def _sql_node(self, state: ConversationState) -> dict:
@@ -316,7 +391,7 @@ class SupervisorAgent:
             Next node name.
         """
         # Check if we need RAG for additional context
-        sql_result = state.get("sql_result", {})
+        sql_result = state.get("sql_result") or {}
 
         # If SQL failed or returned no results, try RAG
         if sql_result.get("error") or not sql_result.get("results"):
@@ -378,14 +453,23 @@ class SupervisorAgent:
             Updated state with combined response.
         """
         query = state["current_query"]
-        sql_result = state.get("sql_result", {})
-        rag_result = state.get("rag_result", {})
+        # Use 'or {}' to handle None values (state.get returns None if key exists with None value)
+        sql_result = state.get("sql_result") or {}
+        rag_result = state.get("rag_result") or {}
 
-        # If only one has results, use that
+        print(f"[DEBUG] _combine_node: sql_result={type(sql_result)}, rag_result={type(rag_result)}")
+
+        # If only RAG has results, use that
         if not sql_result.get("results") and rag_result.get("answer"):
             return {"response": rag_result["answer"]}
+
+        # If only SQL has results, use that
         if sql_result.get("answer") and not rag_result.get("answer"):
             return {"response": sql_result["answer"]}
+
+        # If neither has results
+        if not sql_result.get("answer") and not rag_result.get("answer"):
+            return {"response": "Xin lỗi, tôi không tìm thấy thông tin liên quan. Vui lòng thử hỏi cách khác."}
 
         # Combine both results
         prompt = COMBINE_PROMPT.format(
@@ -397,7 +481,7 @@ class SupervisorAgent:
         response = await self.llm_service.generate(prompt=prompt)
 
         # Combine sources
-        sources = state.get("sources", [])
+        sources = state.get("sources") or []
         if sql_result.get("sql"):
             sources.append({"type": "sql", "query": sql_result["sql"]})
 
@@ -447,7 +531,8 @@ class SupervisorAgent:
         Returns:
             Response dictionary.
         """
-        logger.info(f"Processing query: {query}")
+        import traceback
+        print(f"[DEBUG] SupervisorAgent.process called with query: {query[:50]}...")
 
         # Initialize state
         initial_state: ConversationState = {
@@ -479,7 +564,9 @@ class SupervisorAgent:
             }
 
         except Exception as e:
-            logger.error(f"Supervisor error: {e}")
+            import traceback
+            print(f"[DEBUG] Supervisor error: {e}")
+            print(f"[DEBUG] Full traceback:\n{traceback.format_exc()}")
             return {
                 "query": query,
                 "response": "Xin lỗi, đã xảy ra lỗi khi xử lý yêu cầu của bạn. Vui lòng thử lại.",

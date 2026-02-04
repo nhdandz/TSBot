@@ -55,9 +55,19 @@ export const adminService = {
     })
   },
 
+  // KhoiThi (Exam blocks)
+  async getKhoiThi(): Promise<{ id: number; ma_khoi: string; ten_khoi: string; mon_hoc: string }[]> {
+    return apiClient.get(API_ENDPOINTS.admin.khoiThi, {
+      headers: withAuth(),
+    })
+  },
+
   // Nganh (Majors)
-  async getNganh(): Promise<Nganh[]> {
-    return apiClient.get<Nganh[]>(API_ENDPOINTS.admin.nganh, {
+  async getNganh(truongId?: number): Promise<Nganh[]> {
+    const endpoint = truongId
+      ? `${API_ENDPOINTS.admin.nganh}?truong_id=${truongId}`
+      : API_ENDPOINTS.admin.nganh
+    return apiClient.get<Nganh[]>(endpoint, {
       headers: withAuth(),
     })
   },
@@ -86,7 +96,7 @@ export const adminService = {
 
   // Diem Chuan (Admission Scores)
   async getDiemChuan(params?: {
-    year?: number
+    year?: number | null
     school_id?: string
     major_code?: string
   }): Promise<any> {

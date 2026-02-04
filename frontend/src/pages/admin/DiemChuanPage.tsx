@@ -10,7 +10,18 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Plus, Pencil, Trash2, Loader2, Upload, Download } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
-import type { DiemChuan } from '@/types'
+
+interface DiemChuanFormData {
+  truong_id: number | null
+  nganh_id: number | null
+  khoi_thi_id: number | null
+  nam: number
+  diem_chuan: number
+  gioi_tinh: string | null
+  khu_vuc: string | null
+  chi_tieu: number | null
+  ghi_chu: string
+}
 
 export default function DiemChuanPage() {
   const { toast } = useToast()
@@ -18,42 +29,59 @@ export default function DiemChuanPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingScore, setEditingScore] = useState<any>(null)
 
-  const [filters, setFilters] = useState({
-    year: new Date().getFullYear(),
+  const [filters, setFilters] = useState<{
+    year: number | null
+    school_id: string
+  }>({
+    year: null, // null = tất cả các năm
     school_id: '',
-    major_code: '',
   })
 
-  const [formData, setFormData] = useState<Omit<DiemChuan, 'id'>>({
-    school_id: '',
-    major_code: '',
-    block_code: '',
-    year: new Date().getFullYear(),
-    gender: 'CHUNG',
-    region: 'TOAN_QUOC',
-    score: 0,
-    tieu_chi_phu: '',
+  const [formData, setFormData] = useState<DiemChuanFormData>({
+    truong_id: null,
+    nganh_id: null,
+    khoi_thi_id: null,
+    nam: new Date().getFullYear(),
+    diem_chuan: 0,
+    gioi_tinh: null,
+    khu_vuc: null,
+    chi_tieu: null,
     ghi_chu: '',
   })
 
-  // Fetch data
-  const { data: scores, isLoading } = useQuery({
-    queryKey: ['diem-chuan', filters],
-    queryFn: () => adminService.getDiemChuan(filters),
-  })
-
+  // Fetch schools
   const { data: schools } = useQuery({
     queryKey: ['truong'],
     queryFn: adminService.getTruong,
   })
 
-  const { data: majors } = useQuery({
+  // Fetch all majors initially (for filter dropdown)
+  const { data: allMajors } = useQuery({
     queryKey: ['nganh'],
-    queryFn: adminService.getNganh,
+    queryFn: () => adminService.getNganh(),
+  })
+
+  // Fetch majors filtered by selected school in the form
+  const { data: filteredMajors } = useQuery({
+    queryKey: ['nganh', formData.truong_id],
+    queryFn: () => adminService.getNganh(formData.truong_id || undefined),
+    enabled: !!formData.truong_id,
+  })
+
+  // Fetch exam blocks
+  const { data: khoiThiList } = useQuery({
+    queryKey: ['khoi-thi'],
+    queryFn: adminService.getKhoiThi,
+  })
+
+  // Fetch scores with filters
+  const { data: scores, isLoading } = useQuery({
+    queryKey: ['diem-chuan', filters],
+    queryFn: () => adminService.getDiemChuan(filters),
   })
 
   const createMutation = useMutation({
-    mutationFn: adminService.createDiemChuan,
+    mutationFn: (data: any) => adminService.createDiemChuan(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['diem-chuan'] })
       toast({ title: 'Thành công', description: 'Đã thêm điểm chuẩn mới' })
@@ -61,7 +89,8 @@ export default function DiemChuanPage() {
       resetForm()
     },
     onError: (error: any) => {
-      toast({ title: 'Lỗi', description: error.detail || 'Không thể thêm điểm chuẩn', variant: 'destructive' })
+      const errorMsg = error?.response?.data?.detail || error?.detail || error?.message || 'Không thể thêm điểm chuẩn'
+      toast({ title: 'Lỗi', description: errorMsg, variant: 'destructive' })
     },
   })
 
@@ -75,14 +104,14 @@ export default function DiemChuanPage() {
 
   const resetForm = () => {
     setFormData({
-      school_id: '',
-      major_code: '',
-      block_code: '',
-      year: new Date().getFullYear(),
-      gender: 'CHUNG',
-      region: 'TOAN_QUOC',
-      score: 0,
-      tieu_chi_phu: '',
+      truong_id: null,
+      nganh_id: null,
+      khoi_thi_id: null,
+      nam: new Date().getFullYear(),
+      diem_chuan: 0,
+      gioi_tinh: null,
+      khu_vuc: null,
+      chi_tieu: null,
       ghi_chu: '',
     })
     setEditingScore(null)
@@ -90,7 +119,34 @@ export default function DiemChuanPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    createMutation.mutate(formData)
+
+    if (!formData.nganh_id || !formData.khoi_thi_id) {
+      toast({ title: 'Lỗi', description: 'Vui lòng chọn ngành và khối thi', variant: 'destructive' })
+      return
+    }
+
+    // Prepare data for API - only include non-null values
+    const apiData: any = {
+      nganh_id: formData.nganh_id,
+      khoi_thi_id: formData.khoi_thi_id,
+      nam: formData.nam,
+      diem_chuan: formData.diem_chuan,
+    }
+
+    if (formData.gioi_tinh) {
+      apiData.gioi_tinh = formData.gioi_tinh
+    }
+    if (formData.khu_vuc) {
+      apiData.khu_vuc = formData.khu_vuc
+    }
+    if (formData.chi_tieu) {
+      apiData.chi_tieu = formData.chi_tieu
+    }
+    if (formData.ghi_chu) {
+      apiData.ghi_chu = formData.ghi_chu
+    }
+
+    createMutation.mutate(apiData)
   }
 
   return (
@@ -118,15 +174,15 @@ export default function DiemChuanPage() {
                   <div className="space-y-2">
                     <Label>Trường *</Label>
                     <Select
-                      value={formData.school_id}
-                      onValueChange={(value) => setFormData({ ...formData, school_id: value, major_code: '' })}
+                      value={formData.truong_id?.toString() || ''}
+                      onValueChange={(value) => setFormData({ ...formData, truong_id: parseInt(value), nganh_id: null })}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Chọn trường" />
                       </SelectTrigger>
                       <SelectContent>
                         {schools?.map((school) => (
-                          <SelectItem key={`form-school-${school.id}`} value={school.school_id || `school-${school.id}`}>
+                          <SelectItem key={`form-school-${school.id}`} value={school.id?.toString() || ''}>
                             {school.school_name}
                           </SelectItem>
                         ))}
@@ -137,16 +193,17 @@ export default function DiemChuanPage() {
                   <div className="space-y-2">
                     <Label>Ngành *</Label>
                     <Select
-                      value={formData.major_code}
-                      onValueChange={(value) => setFormData({ ...formData, major_code: value })}
+                      value={formData.nganh_id?.toString() || ''}
+                      onValueChange={(value) => setFormData({ ...formData, nganh_id: parseInt(value) })}
+                      disabled={!formData.truong_id}
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="Chọn ngành" />
+                        <SelectValue placeholder={formData.truong_id ? "Chọn ngành" : "Chọn trường trước"} />
                       </SelectTrigger>
                       <SelectContent>
-                        {majors?.filter(m => !formData.school_id || m.school_name?.includes(formData.school_id)).map((major) => (
-                          <SelectItem key={`form-${major.truong_id}-${major.major_code}`} value={major.id?.toString() || major.major_code}>
-                            {major.school_name} - {major.major_name}
+                        {filteredMajors?.map((major) => (
+                          <SelectItem key={`form-major-${major.id}`} value={major.id?.toString() || ''}>
+                            {major.major_name}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -156,17 +213,18 @@ export default function DiemChuanPage() {
                   <div className="space-y-2">
                     <Label>Khối thi *</Label>
                     <Select
-                      value={formData.block_code}
-                      onValueChange={(value) => setFormData({ ...formData, block_code: value })}
+                      value={formData.khoi_thi_id?.toString() || ''}
+                      onValueChange={(value) => setFormData({ ...formData, khoi_thi_id: parseInt(value) })}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Chọn khối" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="A00">A00 (Toán, Lý, Hóa)</SelectItem>
-                        <SelectItem value="A01">A01 (Toán, Lý, Anh)</SelectItem>
-                        <SelectItem value="D01">D01 (Toán, Văn, Anh)</SelectItem>
-                        <SelectItem value="D07">D07 (Toán, Hóa, Anh)</SelectItem>
+                        {khoiThiList?.map((khoi) => (
+                          <SelectItem key={`form-khoi-${khoi.id}`} value={khoi.id.toString()}>
+                            {khoi.ma_khoi} ({khoi.mon_hoc})
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -175,8 +233,8 @@ export default function DiemChuanPage() {
                     <Label>Năm *</Label>
                     <Input
                       type="number"
-                      value={formData.year}
-                      onChange={(e) => setFormData({ ...formData, year: parseInt(e.target.value) })}
+                      value={formData.nam}
+                      onChange={(e) => setFormData({ ...formData, nam: parseInt(e.target.value) })}
                       min="2020"
                       max="2030"
                       required
@@ -186,16 +244,16 @@ export default function DiemChuanPage() {
                   <div className="space-y-2">
                     <Label>Giới tính</Label>
                     <Select
-                      value={formData.gender}
-                      onValueChange={(value: any) => setFormData({ ...formData, gender: value })}
+                      value={formData.gioi_tinh || 'none'}
+                      onValueChange={(value) => setFormData({ ...formData, gioi_tinh: value === 'none' ? null : value })}
                     >
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="NAM">Nam</SelectItem>
-                        <SelectItem value="NU">Nữ</SelectItem>
-                        <SelectItem value="CHUNG">Chung</SelectItem>
+                        <SelectItem value="none">Không phân biệt</SelectItem>
+                        <SelectItem value="nam">Nam</SelectItem>
+                        <SelectItem value="nu">Nữ</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -203,16 +261,18 @@ export default function DiemChuanPage() {
                   <div className="space-y-2">
                     <Label>Khu vực</Label>
                     <Select
-                      value={formData.region}
-                      onValueChange={(value: any) => setFormData({ ...formData, region: value })}
+                      value={formData.khu_vuc || 'none'}
+                      onValueChange={(value) => setFormData({ ...formData, khu_vuc: value === 'none' ? null : value })}
                     >
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="MIEN_BAC">Miền Bắc</SelectItem>
-                        <SelectItem value="MIEN_NAM">Miền Nam</SelectItem>
-                        <SelectItem value="TOAN_QUOC">Toàn quốc</SelectItem>
+                        <SelectItem value="none">Không phân biệt</SelectItem>
+                        <SelectItem value="KV1">KV1</SelectItem>
+                        <SelectItem value="KV2">KV2</SelectItem>
+                        <SelectItem value="KV2-NT">KV2-NT</SelectItem>
+                        <SelectItem value="KV3">KV3</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -222,19 +282,20 @@ export default function DiemChuanPage() {
                     <Input
                       type="number"
                       step="0.01"
-                      value={formData.score}
-                      onChange={(e) => setFormData({ ...formData, score: parseFloat(e.target.value) })}
+                      value={formData.diem_chuan}
+                      onChange={(e) => setFormData({ ...formData, diem_chuan: parseFloat(e.target.value) || 0 })}
                       placeholder="VD: 25.5"
                       required
                     />
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Tiêu chí phụ</Label>
+                    <Label>Chỉ tiêu</Label>
                     <Input
-                      value={formData.tieu_chi_phu || ''}
-                      onChange={(e) => setFormData({ ...formData, tieu_chi_phu: e.target.value })}
-                      placeholder="VD: Điểm toán >= 8"
+                      type="number"
+                      value={formData.chi_tieu || ''}
+                      onChange={(e) => setFormData({ ...formData, chi_tieu: e.target.value ? parseInt(e.target.value) : null })}
+                      placeholder="Số lượng tuyển"
                     />
                   </div>
                 </div>
@@ -269,14 +330,26 @@ export default function DiemChuanPage() {
           <CardTitle>Bộ lọc</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Năm</Label>
-              <Input
-                type="number"
-                value={filters.year}
-                onChange={(e) => setFilters({ ...filters, year: parseInt(e.target.value) })}
-              />
+              <Select
+                value={filters.year?.toString() || "all"}
+                onValueChange={(value) => setFilters({ ...filters, year: value === "all" ? null : parseInt(value) })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Tất cả các năm" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Tất cả các năm</SelectItem>
+                  {/* Generate years from current year back to 2020 */}
+                  {Array.from({ length: new Date().getFullYear() - 2019 }, (_, i) => new Date().getFullYear() - i).map((year) => (
+                    <SelectItem key={`year-${year}`} value={year.toString()}>
+                      {year}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label>Trường</Label>
@@ -289,22 +362,6 @@ export default function DiemChuanPage() {
                   {schools?.map((school) => (
                     <SelectItem key={`filter-${school.id}`} value={school.id?.toString() || ""}>
                       {school.school_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Ngành</Label>
-              <Select value={filters.major_code || "all"} onValueChange={(value) => setFilters({ ...filters, major_code: value === "all" ? "" : value })}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Tất cả" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Tất cả</SelectItem>
-                  {majors?.map((major) => (
-                    <SelectItem key={`${major.truong_id}-${major.major_code}`} value={major.id?.toString() || `${major.truong_id}-${major.major_code}`}>
-                      {major.school_name} - {major.major_name}
                     </SelectItem>
                   ))}
                 </SelectContent>

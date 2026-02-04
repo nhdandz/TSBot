@@ -1,9 +1,9 @@
-"""Legal RAG Agent with Corrective RAG (CRAG) pattern."""
+"""Legal RAG Agent with Advanced RAG capabilities (CRAG + Hybrid Search + Analysis)."""
 
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 from src.core.config import settings
 from src.core.embeddings import get_embedding_service
@@ -80,7 +80,7 @@ ANSWER_PROMPT = """Bạn là trợ lý tư vấn tuyển sinh quân sự Việt 
 
 
 class RAGAgent:
-    """Legal RAG Agent implementing Corrective RAG pattern."""
+    """Legal RAG Agent implementing Advanced RAG pattern."""
 
     def __init__(
         self,
@@ -109,122 +109,209 @@ class RAGAgent:
         self.embedding_service = get_embedding_service()
         self.qdrant = get_qdrant_db()
 
-        self._reranker = None
+        # Initialize Advanced Components
+        if settings.use_query_analysis:
+            from src.agents.components.query_processor import QueryAnalyzer, QueryExpander
+            self.analyzer = QueryAnalyzer()
+            self.expander = QueryExpander()
+        else:
+            self.analyzer = None
+            self.expander = None
 
-    @property
-    def reranker(self):
-        """Lazy load reranker model."""
-        if self._reranker is None and self.enable_reranking:
-            try:
-                from sentence_transformers import CrossEncoder
+        if settings.use_semantic_cache:
+            from src.agents.components.cache import SemanticCache
+            self.cache = SemanticCache()
+        else:
+            self.cache = None
 
-                self._reranker = CrossEncoder(
-                    settings.reranker_model,
-                    max_length=512,
-                )
-                logger.info(f"Loaded reranker: {settings.reranker_model}")
-            except Exception as e:
-                logger.warning(f"Failed to load reranker: {e}")
-                self.enable_reranking = False
-        return self._reranker
+        if settings.use_hybrid_search and enable_reranking:
+            from src.agents.components.reranker import HybridReranker
+            self.reranker_module = HybridReranker()
+        else:
+            self.reranker_module = None
 
     async def process_query(
         self,
         query: str,
         context: Optional[dict] = None,
     ) -> dict[str, Any]:
-        """Process a query using CRAG pattern.
-
-        CRAG Flow:
-        1. Retrieve documents
-        2. Grade document relevance
-        3. If low relevance, rewrite query and retry
-        4. Rerank documents
-        5. Generate answer
-
-        Args:
-            query: User's question.
-            context: Optional conversation context.
-
-        Returns:
-            Response dictionary with answer and metadata.
-        """
+        """Process a query using Advanced RAG pattern."""
         logger.info(f"Processing RAG query: {query}")
+        
+        # 0. Embed Query (Reusable)
+        query_embedding = self.embedding_service.encode_query(query)
 
-        # Step 1: Initial retrieval
-        documents = await self._retrieve(query)
-        logger.debug(f"Retrieved {len(documents)} documents")
+        # 1. Semantic Cache Check
+        if self.cache:
+            cached_result = self.cache.lookup(query_embedding)
+            if cached_result:
+                return cached_result['response']
 
-        # Step 2: Grade relevance
+        # 2. Intent Analysis
+        intent = "general"
+        if self.analyzer:
+            analysis = self.analyzer.analyze(query)
+            intent = analysis['intent']
+            logger.info(f"Detected intent: {intent} (conf: {analysis['confidence']})")
+
+        # 3. Query Expansion
+        search_queries = [query]
+        if self.expander:
+            search_queries = self.expander.expand(query, intent)
+            logger.debug(f"Expanded queries: {search_queries}")
+
+        # 4. Smart Retrieval (Parallel)
+        documents = await self._retrieve_multi(search_queries)
+        logger.debug(f"Initial retrieval: {len(documents)} docs")
+
+        # 4.5. Smart Context Enrichment (Fetch Siblings)
+        if settings.use_smart_retrieval:
+            documents = await self._enrich_context(documents)
+
+        # 5. Grade relevance (CRAG)
         graded_docs = await self._grade_documents(query, documents)
-
-        # Count relevant documents
-        relevant_count = sum(
-            1 for d in graded_docs if d.relevance_grade == RelevanceGrade.RELEVANT
-        )
-        partially_count = sum(
-            1 for d in graded_docs if d.relevance_grade == RelevanceGrade.PARTIALLY_RELEVANT
-        )
-
-        # Step 3: Query rewriting if needed
-        if relevant_count == 0 and self.enable_query_rewrite:
-            logger.info("No relevant documents, attempting query rewrite")
-            rewritten_query = await self._rewrite_query(query)
-
-            if rewritten_query != query:
-                logger.debug(f"Rewritten query: {rewritten_query}")
-                # Retry retrieval with rewritten query
-                documents = await self._retrieve(rewritten_query)
-                graded_docs = await self._grade_documents(query, documents)
-
-        # Filter to relevant/partially relevant
-        filtered_docs = [
-            d for d in graded_docs
+        
+        relevant_docs = [
+            d for d in graded_docs 
             if d.relevance_grade in [RelevanceGrade.RELEVANT, RelevanceGrade.PARTIALLY_RELEVANT]
         ]
+        
+        # 6. Query Rewrite (Fallback if no relevant docs)
+        if not relevant_docs and self.enable_query_rewrite:
+            logger.info("No relevant docs, rewriting query...")
+            rewritten = await self._rewrite_query(query)
+            if rewritten != query:
+                # Retry simplier retrieval
+                documents = await self._retrieve(rewritten)
+                graded_docs = await self._grade_documents(query, documents)
+                relevant_docs = [
+                    d for d in graded_docs 
+                    if d.relevance_grade in [RelevanceGrade.RELEVANT, RelevanceGrade.PARTIALLY_RELEVANT]
+                ]
 
-        # Step 4: Rerank if enabled
-        if self.enable_reranking and len(filtered_docs) > self.reranker_top_k:
-            filtered_docs = await self._rerank(query, filtered_docs)
+        # 7. Hybrid Reranking
+        if self.reranker_module and relevant_docs:
+            relevant_docs = self.reranker_module.rerank(
+                query, relevant_docs, top_k=self.reranker_top_k
+            )
+        elif self.enable_reranking and relevant_docs and not self.reranker_module:
+            # Fallback to old reranker logic if Hybrid Module failed to load
+            # OR simple sort by retrieval score
+             relevant_docs.sort(key=lambda x: x.score, reverse=True)
+             relevant_docs = relevant_docs[:self.reranker_top_k]
 
-        # Step 5: Generate answer
-        if filtered_docs:
-            answer = await self._generate_answer(query, filtered_docs)
-            sources = self._format_sources(filtered_docs)
+        # 8. Generate Answer
+        if relevant_docs:
+            answer = await self._generate_answer(query, relevant_docs)
+            sources = self._format_sources(relevant_docs)
         else:
             answer = (
-                "Xin lỗi, tôi không tìm thấy thông tin liên quan trong văn bản quy định. "
-                "Vui lòng thử hỏi cách khác hoặc liên hệ trực tiếp với cơ quan tuyển sinh."
+                "Xin lỗi, tôi không tìm thấy thông tin phù hợp trong văn bản quy định. "
+                "Bạn có thể thử hỏi lại với từ khóa cụ thể hơn."
             )
             sources = []
 
-        return {
+        result = {
             "query": query,
             "answer": answer,
             "sources": sources,
+            "intent": intent,
             "documents_retrieved": len(documents),
-            "documents_relevant": len(filtered_docs),
-            "reranking_used": self.enable_reranking and len(filtered_docs) > 0,
+            "documents_relevant": len(relevant_docs),
         }
 
+        # 9. Update Cache
+        if self.cache and relevant_docs and len(answer) > 50:
+            self.cache.add(query, query_embedding, result)
+
+        return result
+
+    async def _retrieve_multi(self, queries: list[str]) -> list[RetrievedDocument]:
+        """Execute retrieval for multiple queries and deduplicate."""
+        all_docs = []
+        seen_content_hashes = set()
+        
+        # Sequential for now to avoid overloading Qdrant/Embedding
+        for q in queries:
+            docs = await self._retrieve(q)
+            for doc in docs:
+                # Deduplicate by content hash
+                # (doc.metadata['id'] is not guaranteed if Qdrant auto-generated UUIDs that differ on upsert)
+                # But typically RAG context is deduplicated by content
+                h = hash(doc.content)
+                if h not in seen_content_hashes:
+                    seen_content_hashes.add(h)
+                    all_docs.append(doc)
+        
+        return all_docs
+
+    async def _enrich_context(self, documents: list[RetrievedDocument]) -> list[RetrievedDocument]:
+        """Fetch siblings/context for top documents."""
+        # Only enrich top 3 to save time
+        candidates = documents[:3]
+        enriched_count = 0
+        seen_content_hashes = {hash(d.content) for d in documents}
+        
+        for doc in candidates:
+            article = doc.metadata.get('article')
+            if not article:
+                continue
+                
+            # Find siblings: Same Article
+            try:
+                # We need to use 'filter' only search, but qdrant client usually expects a vector
+                # We can use the document's own vector to find similar items (which should be siblings) 
+                # constrained by the Article ID
+                
+                # Check if we have the vector? We don't store it in RetrievedDocument.
+                # Re-embed content
+                doc_vector = self.embedding_service.encode_query(doc.content).tolist()
+                
+                siblings = await self.qdrant.search_with_filter(
+                    collection_name=settings.qdrant_legal_collection,
+                    query_vector=doc_vector,
+                    # sibling MUST have same article
+                    must_conditions=[
+                        {"key": "article", "match": {"value": article}}
+                    ],
+                    # If we had document_number, we should restrict to same document too
+                    # But often article numbers are unique enough within a context or we assume top retrieval is correct doc
+                    limit=5 
+                )
+                
+                for sib in siblings:
+                    content = sib['payload'].get('content', '')
+                    h = hash(content)
+                    
+                    if h not in seen_content_hashes:
+                        seen_content_hashes.add(h)
+                        sib_doc = RetrievedDocument(
+                            content=content,
+                            metadata=sib['payload'],
+                            score=sib['score']
+                        )
+                        # Mark as implicit context
+                        sib_doc.metadata['is_sibling'] = True
+                        documents.append(sib_doc)
+                        enriched_count += 1
+                        
+            except Exception as e:
+                logger.warning(f"Failed to enrich context: {e}")
+                
+        if enriched_count > 0:
+            logger.debug(f"Enriched context with {enriched_count} sibling chunks")
+            
+        return documents
+
     async def _retrieve(self, query: str) -> list[RetrievedDocument]:
-        """Retrieve documents from vector store.
-
-        Args:
-            query: Search query.
-
-        Returns:
-            List of retrieved documents.
-        """
-        # Embed query
+        """Retrieve documents from vector store."""
         query_embedding = self.embedding_service.encode_query(query)
 
-        # Search in Qdrant
         results = await self.qdrant.search(
             collection_name=settings.qdrant_legal_collection,
             query_vector=query_embedding.tolist(),
             limit=self.top_k,
-            score_threshold=self.relevance_threshold * 0.5,  # Lower threshold for initial retrieval
+            score_threshold=self.relevance_threshold * 0.5,
         )
 
         documents = []
@@ -245,35 +332,27 @@ class RAGAgent:
         query: str,
         documents: list[RetrievedDocument],
     ) -> list[RetrievedDocument]:
-        """Grade document relevance using LLM.
-
-        Args:
-            query: User query.
-            documents: Retrieved documents.
-
-        Returns:
-            Documents with relevance grades.
-        """
+        """Grade document relevance using LLM."""
         graded = []
 
         for doc in documents:
+            # If explicit sibling, maybe skip grading or assume partially relevant?
+            # For now, grade everything to be safe
             try:
                 prompt = GRADER_PROMPT.format(
                     question=query,
-                    document=doc.content[:1000],  # Truncate for efficiency
+                    document=doc.content[:1000],
                 )
 
                 response = await self.llm_service.generate_with_json(
                     prompt=prompt,
-                    use_grader=True,  # Use smaller/faster model
+                    use_grader=True,
                 )
 
                 grade_str = response.get("grade", "not_relevant")
                 doc.relevance_grade = RelevanceGrade(grade_str)
 
             except Exception as e:
-                logger.warning(f"Grading failed: {e}")
-                # Default to partially relevant if grading fails
                 doc.relevance_grade = RelevanceGrade.PARTIALLY_RELEVANT
 
             graded.append(doc)
@@ -281,14 +360,7 @@ class RAGAgent:
         return graded
 
     async def _rewrite_query(self, query: str) -> str:
-        """Rewrite query for better retrieval.
-
-        Args:
-            query: Original query.
-
-        Returns:
-            Rewritten query.
-        """
+        """Rewrite query for better retrieval."""
         try:
             prompt = REWRITE_PROMPT.format(question=query)
             rewritten = await self.llm_service.generate(
@@ -300,61 +372,14 @@ class RAGAgent:
             logger.warning(f"Query rewrite failed: {e}")
             return query
 
-    async def _rerank(
-        self,
-        query: str,
-        documents: list[RetrievedDocument],
-    ) -> list[RetrievedDocument]:
-        """Rerank documents using cross-encoder.
-
-        Args:
-            query: User query.
-            documents: Documents to rerank.
-
-        Returns:
-            Reranked documents.
-        """
-        if not self.reranker or not documents:
-            return documents[:self.reranker_top_k]
-
-        try:
-            # Prepare pairs for reranking
-            pairs = [(query, doc.content) for doc in documents]
-
-            # Get reranker scores
-            scores = self.reranker.predict(pairs)
-
-            # Update scores and sort
-            for doc, score in zip(documents, scores):
-                doc.rerank_score = float(score)
-
-            # Sort by rerank score
-            documents.sort(key=lambda d: d.rerank_score or 0, reverse=True)
-
-            return documents[:self.reranker_top_k]
-
-        except Exception as e:
-            logger.warning(f"Reranking failed: {e}")
-            return documents[:self.reranker_top_k]
-
     async def _generate_answer(
         self,
         query: str,
         documents: list[RetrievedDocument],
     ) -> str:
-        """Generate answer from relevant documents.
-
-        Args:
-            query: User query.
-            documents: Relevant documents.
-
-        Returns:
-            Generated answer.
-        """
-        # Build context from documents
+        """Generate answer from relevant documents."""
         context_parts = []
         for i, doc in enumerate(documents, 1):
-            # Include hierarchy path if available
             hierarchy = ""
             if doc.metadata.get("article"):
                 hierarchy = f"Điều {doc.metadata['article']}"
@@ -382,14 +407,7 @@ class RAGAgent:
         self,
         documents: list[RetrievedDocument],
     ) -> list[dict]:
-        """Format source citations.
-
-        Args:
-            documents: Source documents.
-
-        Returns:
-            List of source citations.
-        """
+        """Format source citations."""
         sources = []
         for doc in documents:
             source = {
@@ -397,7 +415,6 @@ class RAGAgent:
                 "score": round(doc.rerank_score or doc.score, 3),
             }
 
-            # Add hierarchy info
             if doc.metadata.get("chapter"):
                 source["chapter"] = doc.metadata["chapter"]
             if doc.metadata.get("article"):

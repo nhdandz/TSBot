@@ -93,10 +93,23 @@ class Settings(BaseSettings):
     rag_chunk_overlap: int = 50
     rag_top_k: int = 5
     rag_relevance_threshold: float = 0.7
-
+    
+    # Advanced RAG Features
+    use_hybrid_search: bool = True
+    use_semantic_cache: bool = True
+    use_query_analysis: bool = True
+    use_query_expansion: bool = True
+    use_smart_retrieval: bool = True
+    
+    # Cache
+    cache_similarity_threshold: float = 0.92
+    cache_ttl_hours: int = 24
+    
     # Reranker
     reranker_model: str = "namdp-ptit/ViRanker"
     reranker_top_k: int = 3
+    # Weights: cross_encoder, retrieval, metadata
+    reranker_weights: dict = {"cross_encoder": 0.55, "retrieval": 0.35, "metadata": 0.10}
 
     # SQL Agent
     sql_max_retries: int = 3

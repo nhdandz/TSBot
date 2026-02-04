@@ -325,6 +325,10 @@ ORDER BY ten_truong, ten_nganh;""",
         # Remove markdown code blocks
         response = response.strip()
 
+        # Remove thinking tags (qwen3, deepseek-r1 models)
+        response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
+        response = response.strip()
+
         if response.startswith("```sql"):
             response = response[6:]
         if response.startswith("```"):

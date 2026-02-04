@@ -159,8 +159,9 @@ class LLMService:
             Parsed JSON response.
         """
         import json
+        import re
 
-        full_prompt = prompt + "\n\nRespond with valid JSON only."
+        full_prompt = prompt + "\n\nRespond with valid JSON only. Do not include thinking tags."
 
         response = await self.generate(
             prompt=full_prompt,
@@ -171,6 +172,10 @@ class LLMService:
         # Try to extract JSON from response
         response = response.strip()
 
+        # Remove thinking tags (qwen3, deepseek-r1 models)
+        response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
+        response = response.strip()
+
         # Handle markdown code blocks
         if response.startswith("```json"):
             response = response[7:]
@@ -178,6 +183,12 @@ class LLMService:
             response = response[3:]
         if response.endswith("```"):
             response = response[:-3]
+
+        # Try to find JSON object in response
+        response = response.strip()
+        json_match = re.search(r"\{.*\}", response, re.DOTALL)
+        if json_match:
+            response = json_match.group()
 
         return json.loads(response.strip())
 
