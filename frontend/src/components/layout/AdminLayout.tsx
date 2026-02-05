@@ -2,6 +2,7 @@ import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
+import { ThemeToggle } from '@/components/ui/theme-toggle'
 import {
   LayoutDashboard,
   School,
@@ -10,6 +11,7 @@ import {
   LogOut,
   Shield,
   Menu,
+  Users,
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -18,6 +20,11 @@ const navItems = [
     title: 'Dashboard',
     href: '/admin/dashboard',
     icon: LayoutDashboard,
+  },
+  {
+    title: 'Người dùng',
+    href: '/admin/users',
+    icon: Users,
   },
   {
     title: 'Trường',
@@ -48,28 +55,28 @@ export default function AdminLayout() {
   }
 
   return (
-    <div className="flex h-screen bg-background">
+    <div className="flex h-screen bg-[#fafafa] dark:bg-[#08080c]">
       {/* Sidebar */}
       <aside
         className={`${
           sidebarOpen ? 'w-64' : 'w-20'
-        } border-r bg-card transition-all duration-300 flex flex-col`}
+        } border-r border-gray-200 dark:border-white/[0.06] bg-white/80 dark:bg-[#0c0c14]/80 backdrop-blur-2xl transition-all duration-300 flex flex-col`}
       >
         {/* Header */}
-        <div className="p-4 border-b">
+        <div className="p-4 border-b border-gray-200 dark:border-white/[0.06]">
           <div className="flex items-center justify-between">
             {sidebarOpen ? (
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-military-gradient rounded-lg flex items-center justify-center">
+                <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/25">
                   <Shield className="w-5 h-5 text-white" />
                 </div>
                 <div>
-                  <h2 className="font-bold text-sm">TSBot Admin</h2>
-                  <p className="text-xs text-muted-foreground">Quản trị hệ thống</p>
+                  <h2 className="font-bold text-sm text-gray-900 dark:text-white">TSBot Admin</h2>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Quản trị hệ thống</p>
                 </div>
               </div>
             ) : (
-              <div className="w-8 h-8 bg-military-gradient rounded-lg flex items-center justify-center mx-auto">
+              <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-lg flex items-center justify-center mx-auto shadow-lg shadow-indigo-500/25">
                 <Shield className="w-5 h-5 text-white" />
               </div>
             )}
@@ -77,7 +84,7 @@ export default function AdminLayout() {
               variant="ghost"
               size="icon"
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className={sidebarOpen ? '' : 'mx-auto mt-2'}
+              className={`text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.06] ${sidebarOpen ? '' : 'mx-auto mt-2'}`}
             >
               <Menu className="w-4 h-4" />
             </Button>
@@ -85,7 +92,7 @@ export default function AdminLayout() {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 p-4 space-y-2">
+        <nav className="flex-1 p-4 space-y-1">
           {navItems.map((item) => {
             const Icon = item.icon
             const isActive = location.pathname === item.href
@@ -93,8 +100,10 @@ export default function AdminLayout() {
               <Link key={item.href} to={item.href}>
                 <Button
                   variant={isActive ? 'default' : 'ghost'}
-                  className={`w-full justify-start gap-3 ${
-                    isActive ? 'bg-military-600 hover:bg-military-700' : ''
+                  className={`w-full justify-start gap-3 transition-all duration-200 ${
+                    isActive
+                      ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-500/25'
+                      : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.06] hover:text-gray-900 dark:hover:text-white'
                   } ${!sidebarOpen ? 'justify-center' : ''}`}
                 >
                   <Icon className="w-5 h-5" />
@@ -105,19 +114,19 @@ export default function AdminLayout() {
           })}
         </nav>
 
-        <Separator />
+        <Separator className="bg-gray-200 dark:bg-white/[0.06]" />
 
         {/* User info */}
         <div className="p-4">
           {sidebarOpen ? (
             <div className="mb-3">
-              <p className="text-sm font-medium">{user?.username}</p>
-              <p className="text-xs text-muted-foreground capitalize">{user?.role}</p>
+              <p className="text-sm font-medium text-gray-900 dark:text-white">{user?.username}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 capitalize">{user?.role}</p>
             </div>
           ) : null}
           <Button
             variant="destructive"
-            className="w-full gap-2"
+            className="w-full gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 border border-red-500/20"
             onClick={handleLogout}
             size={sidebarOpen ? 'default' : 'icon'}
           >
@@ -127,12 +136,20 @@ export default function AdminLayout() {
         </div>
       </aside>
 
-      {/* Main content */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="container mx-auto p-6">
-          <Outlet />
-        </div>
-      </main>
+      {/* Main content area */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Top header bar */}
+        <header className="h-14 border-b border-gray-200 dark:border-white/[0.06] bg-white/80 dark:bg-[#0c0c14]/80 backdrop-blur-2xl flex items-center justify-end px-6">
+          <ThemeToggle />
+        </header>
+
+        {/* Main content */}
+        <main className="flex-1 overflow-y-auto">
+          <div className="container mx-auto p-6">
+            <Outlet />
+          </div>
+        </main>
+      </div>
     </div>
   )
 }

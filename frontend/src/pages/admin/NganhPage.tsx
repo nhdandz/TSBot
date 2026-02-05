@@ -87,51 +87,54 @@ export default function NganhPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Quản lý Ngành</h1>
-          <p className="text-muted-foreground mt-1">Danh sách các ngành đào tạo</p>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Quản lý Ngành</h1>
+          <p className="text-gray-500 dark:text-gray-400 mt-1">Danh sách các ngành đào tạo</p>
         </div>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
-            <Button className="bg-military-600 hover:bg-military-700" onClick={resetForm}>
+            <Button className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-500/25" onClick={resetForm}>
               <Plus className="w-4 h-4 mr-2" />
               Thêm ngành
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="bg-white dark:bg-[#0c0c14] border-gray-200 dark:border-white/[0.08]">
             <DialogHeader>
-              <DialogTitle>{editingMajor ? 'Chỉnh sửa ngành' : 'Thêm ngành mới'}</DialogTitle>
+              <DialogTitle className="text-gray-900 dark:text-white">{editingMajor ? 'Chỉnh sửa ngành' : 'Thêm ngành mới'}</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
-                <Label>Mã ngành *</Label>
+                <Label className="text-gray-700 dark:text-gray-300">Mã ngành *</Label>
                 <Input
                   value={formData.major_code}
                   onChange={(e) => setFormData({ ...formData, major_code: e.target.value })}
                   placeholder="VD: CNTT"
                   required
                   disabled={!!editingMajor}
+                  className="bg-gray-50 dark:bg-white/[0.04] border-gray-200 dark:border-white/[0.08]"
                 />
               </div>
               <div className="space-y-2">
-                <Label>Tên ngành *</Label>
+                <Label className="text-gray-700 dark:text-gray-300">Tên ngành *</Label>
                 <Input
                   value={formData.major_name}
                   onChange={(e) => setFormData({ ...formData, major_name: e.target.value })}
                   placeholder="VD: Công nghệ thông tin"
                   required
+                  className="bg-gray-50 dark:bg-white/[0.04] border-gray-200 dark:border-white/[0.08]"
                 />
               </div>
               <div className="space-y-2">
-                <Label>Mô tả</Label>
+                <Label className="text-gray-700 dark:text-gray-300">Mô tả</Label>
                 <Input
                   value={formData.description || ''}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   placeholder="Mô tả ngành học"
+                  className="bg-gray-50 dark:bg-white/[0.04] border-gray-200 dark:border-white/[0.08]"
                 />
               </div>
               <div className="flex gap-2 justify-end">
-                <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>Hủy</Button>
-                <Button type="submit" className="bg-military-600 hover:bg-military-700">
+                <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)} className="border-gray-200 dark:border-white/[0.08] text-gray-700 dark:text-gray-300">Hủy</Button>
+                <Button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white">
                   {editingMajor ? 'Cập nhật' : 'Thêm'}
                 </Button>
               </div>
@@ -140,36 +143,36 @@ export default function NganhPage() {
         </Dialog>
       </div>
 
-      <Card>
+      <Card className="bg-white dark:bg-white/[0.04] border-gray-200 dark:border-white/[0.06]">
         <CardHeader>
-          <CardTitle>Danh sách ngành ({majors?.length || 0})</CardTitle>
+          <CardTitle className="text-gray-900 dark:text-white">Danh sách ngành ({majors?.length || 0})</CardTitle>
         </CardHeader>
         <CardContent>
           {isLoading ? (
             <div className="flex justify-center p-8">
-              <Loader2 className="w-8 h-8 animate-spin text-military-600" />
+              <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
             </div>
           ) : majors && majors.length > 0 ? (
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead>Trường</TableHead>
-                  <TableHead>Mã ngành</TableHead>
-                  <TableHead>Tên ngành</TableHead>
-                  <TableHead>Mô tả</TableHead>
-                  <TableHead className="text-right">Thao tác</TableHead>
+                <TableRow className="border-gray-200 dark:border-white/[0.06]">
+                  <TableHead className="text-gray-600 dark:text-gray-400">Trường</TableHead>
+                  <TableHead className="text-gray-600 dark:text-gray-400">Mã ngành</TableHead>
+                  <TableHead className="text-gray-600 dark:text-gray-400">Tên ngành</TableHead>
+                  <TableHead className="text-gray-600 dark:text-gray-400">Mô tả</TableHead>
+                  <TableHead className="text-right text-gray-600 dark:text-gray-400">Thao tác</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {majors.map((major) => (
-                  <TableRow key={`${major.truong_id}-${major.major_code}`}>
-                    <TableCell className="font-medium">{major.school_name || '-'}</TableCell>
-                    <TableCell className="font-mono">{major.major_code}</TableCell>
-                    <TableCell>{major.major_name}</TableCell>
-                    <TableCell>{major.description || '-'}</TableCell>
+                  <TableRow key={`${major.truong_id}-${major.major_code}`} className="border-gray-200 dark:border-white/[0.06]">
+                    <TableCell className="font-medium text-gray-900 dark:text-white">{major.school_name || '-'}</TableCell>
+                    <TableCell className="font-mono text-gray-900 dark:text-white">{major.major_code}</TableCell>
+                    <TableCell className="text-gray-900 dark:text-white">{major.major_name}</TableCell>
+                    <TableCell className="text-gray-600 dark:text-gray-400">{major.description || '-'}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex gap-2 justify-end">
-                        <Button variant="outline" size="icon" onClick={() => handleEdit(major)}>
+                        <Button variant="outline" size="icon" onClick={() => handleEdit(major)} className="border-gray-200 dark:border-white/[0.08] hover:bg-gray-100 dark:hover:bg-white/[0.06]">
                           <Pencil className="w-4 h-4" />
                         </Button>
                         <Button
@@ -178,6 +181,7 @@ export default function NganhPage() {
                           onClick={() => {
                             if (confirm('Xóa ngành này?')) deleteMutation.mutate(major.major_code)
                           }}
+                          className="bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 border border-red-500/20"
                         >
                           <Trash2 className="w-4 h-4" />
                         </Button>
@@ -188,7 +192,7 @@ export default function NganhPage() {
               </TableBody>
             </Table>
           ) : (
-            <div className="text-center p-8 text-muted-foreground">Chưa có dữ liệu</div>
+            <div className="text-center p-8 text-gray-500 dark:text-gray-400">Chưa có dữ liệu</div>
           )}
         </CardContent>
       </Card>

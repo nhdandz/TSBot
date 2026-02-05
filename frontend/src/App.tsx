@@ -1,8 +1,10 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from '@/components/ui/toaster'
+import LandingPage from '@/pages/LandingPage'
 import ChatPage from '@/pages/ChatPage'
 import LoginPage from '@/pages/admin/LoginPage'
 import DashboardPage from '@/pages/admin/DashboardPage'
+import UsersPage from '@/pages/admin/UsersPage'
 import TruongPage from '@/pages/admin/TruongPage'
 import NganhPage from '@/pages/admin/NganhPage'
 import DiemChuanPage from '@/pages/admin/DiemChuanPage'
@@ -23,8 +25,9 @@ function App() {
   return (
     <>
       <Routes>
-        {/* Public chat interface */}
-        <Route path="/" element={<ChatPage />} />
+        {/* Public pages */}
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/chat" element={<ChatPage />} />
 
         {/* Admin routes */}
         <Route path="/admin/login" element={<LoginPage />} />
@@ -38,6 +41,7 @@ function App() {
         >
           <Route index element={<Navigate to="/admin/dashboard" replace />} />
           <Route path="dashboard" element={<DashboardPage />} />
+          <Route path="users" element={<UsersPage />} />
           <Route path="truong" element={<TruongPage />} />
           <Route path="nganh" element={<NganhPage />} />
           <Route path="diem-chuan" element={<DiemChuanPage />} />

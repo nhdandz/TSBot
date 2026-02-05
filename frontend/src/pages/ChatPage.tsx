@@ -1,13 +1,17 @@
-import { useEffect, useState } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useEffect } from 'react'
+import { useMutation } from '@tanstack/react-query'
+import { motion } from 'framer-motion'
+import { Link } from 'react-router-dom'
 import { MessageList } from '@/components/chat/MessageList'
 import { ChatInput } from '@/components/chat/ChatInput'
 import { useChatStore } from '@/stores/chatStore'
 import { chatService } from '@/services/chatService'
-import { Button } from '@/components/ui/button'
-import { RefreshCw, Shield } from 'lucide-react'
+import { Bot, ArrowLeft, RotateCcw } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+import { ThemeToggle } from '@/components/ui/theme-toggle'
 import type { ChatMessage } from '@/types'
+
+const ease = [0.22, 1, 0.36, 1] as const
 
 export default function ChatPage() {
   const { toast } = useToast()
@@ -24,7 +28,6 @@ export default function ChatPage() {
     resetSession,
   } = useChatStore()
 
-  // Load chat history on mount
   useEffect(() => {
     const loadHistory = async () => {
       try {
@@ -41,7 +44,6 @@ export default function ChatPage() {
     loadHistory()
   }, [sessionId, setMessages])
 
-  // Send message mutation
   const sendMessageMutation = useMutation({
     mutationFn: chatService.sendMessage,
     onSuccess: (data) => {
@@ -69,7 +71,6 @@ export default function ChatPage() {
   })
 
   const handleSendMessage = async (content: string) => {
-    // Add user message immediately
     const userMessage: ChatMessage = {
       role: 'user',
       content,
@@ -79,7 +80,6 @@ export default function ChatPage() {
     setIsLoading(true)
     setIsTyping(true)
 
-    // Send to API
     sendMessageMutation.mutate({
       message: content,
       session_id: sessionId,
@@ -89,44 +89,63 @@ export default function ChatPage() {
   const handleResetChat = () => {
     resetSession()
     toast({
-      title: 'Đã reset cuộc trò chuyện',
-      description: 'Bạn có thể bắt đầu một cuộc trò chuyện mới.',
+      title: 'Đã reset',
+      description: 'Bạn có thể bắt đầu cuộc trò chuyện mới.',
     })
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gradient-to-br from-primary-50 via-background to-military-50">
-      {/* Header */}
-      <header className="border-b bg-white/80 backdrop-blur-sm shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+    <div className="flex flex-col h-screen bg-[#fafafa] dark:bg-[#08080c] noise-bg transition-colors duration-300">
+      {/* ambient glows */}
+      <div className="pointer-events-none fixed inset-0">
+        <div className="absolute top-[-20%] left-1/2 -translate-x-1/2 w-[700px] h-[500px] rounded-full bg-indigo-200/30 dark:bg-indigo-500/[0.05] blur-[120px] transition-colors duration-500" />
+      </div>
+
+      {/* header */}
+      <motion.header
+        className="relative z-20 border-b border-gray-200/80 dark:border-white/[0.06] bg-white/60 dark:bg-[#08080c]/60 backdrop-blur-2xl transition-colors duration-300"
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease }}
+      >
+        <div className="max-w-5xl mx-auto px-5 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-military-600 to-primary-600 rounded-lg flex items-center justify-center">
-              <Shield className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-foreground">
-                TSBot - Tư vấn Tuyển sinh Quân đội
-              </h1>
-              <p className="text-xs text-muted-foreground">
-                Chatbot AI hỗ trợ thí sinh tìm hiểu về tuyển sinh quân sự Việt Nam
-              </p>
+            <Link
+              to="/"
+              className="flex items-center justify-center w-8 h-8 rounded-lg bg-gray-100 dark:bg-white/[0.04] border border-gray-200 dark:border-white/[0.06] text-gray-400 dark:text-white/40 hover:text-gray-700 dark:hover:text-white/80 hover:bg-gray-200 dark:hover:bg-white/[0.07] transition-all"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </Link>
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-600 flex items-center justify-center">
+                <Bot className="w-[18px] h-[18px] text-white" />
+              </div>
+              <div>
+                <h1 className="text-[14px] font-semibold tracking-tight text-gray-900 dark:text-white/90">
+                  TSBot
+                </h1>
+                <p className="text-[11px] text-gray-400 dark:text-white/30 leading-none">
+                  AI Tư vấn tuyển sinh
+                </p>
+              </div>
             </div>
           </div>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleResetChat}
-            className="gap-2"
-          >
-            <RefreshCw className="w-4 h-4" />
-            Reset
-          </Button>
+          <div className="flex items-center gap-3">
+            <ThemeToggle />
+            <button
+              onClick={handleResetChat}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-white/[0.04] border border-gray-200 dark:border-white/[0.06] text-[12px] font-medium text-gray-400 dark:text-white/40 hover:text-gray-700 dark:hover:text-white/80 hover:bg-gray-200 dark:hover:bg-white/[0.07] transition-all"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span className="hidden sm:inline">Cuộc trò chuyện mới</span>
+            </button>
+          </div>
         </div>
-      </header>
+      </motion.header>
 
-      {/* Chat Area */}
-      <main className="flex-1 flex flex-col max-w-5xl w-full mx-auto bg-white/60 backdrop-blur-sm shadow-lg my-4 rounded-lg overflow-hidden">
+      {/* chat area */}
+      <main className="relative z-10 flex-1 flex flex-col max-w-3xl w-full mx-auto overflow-hidden">
         <MessageList messages={messages} isTyping={isTyping} />
         <ChatInput
           onSendMessage={handleSendMessage}
@@ -134,18 +153,6 @@ export default function ChatPage() {
           isLoading={isLoading}
         />
       </main>
-
-      {/* Footer */}
-      <footer className="border-t bg-white/80 backdrop-blur-sm py-3">
-        <div className="max-w-7xl mx-auto px-4 text-center text-xs text-muted-foreground">
-          <p>
-            © 2026 TSBot - Hệ thống chatbot AI tư vấn tuyển sinh quân đội. Phát triển bởi AI Team.
-          </p>
-          <p className="mt-1">
-            Thông tin chỉ mang tính tham khảo. Vui lòng kiểm tra lại với cơ quan chức năng.
-          </p>
-        </div>
-      </footer>
     </div>
   )
 }
