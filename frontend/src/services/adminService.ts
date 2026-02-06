@@ -155,4 +155,59 @@ export const adminService = {
       headers: withAuth(),
     })
   },
+
+  // Documents
+  async uploadDocument(file: File): Promise<{
+    success: boolean
+    message: string
+    filename: string
+    chunks: number
+  }> {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    console.log('[AdminService] Uploading document:', file.name, file.size, file.type)
+
+    return apiClient.post(
+      '/api/v1/admin/documents/upload',
+      formData,
+      {
+        headers: {
+          ...withAuth(),
+          // Don't set Content-Type - let browser set it automatically with boundary
+        },
+      }
+    )
+  },
+
+  async getDocuments(): Promise<{
+    total: number
+    documents: Array<{
+      filename: string
+      chunks: number
+      uploaded_by: string
+      uploaded_at: string
+    }>
+  }> {
+    return apiClient.get(
+      '/api/v1/admin/documents',
+      {
+        headers: withAuth(),
+      }
+    )
+  },
+
+  async deleteDocument(filename: string): Promise<{
+    success: boolean
+    message: string
+    deleted_chunks: number
+  }> {
+    return apiClient.delete(
+      `/api/v1/admin/documents/${encodeURIComponent(filename)}`,
+      {
+        headers: withAuth(),
+      }
+    )
+  },
 }
+

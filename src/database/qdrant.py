@@ -327,6 +327,73 @@ class QdrantDB:
             logger.error(f"Qdrant health check failed: {e}")
             return False
 
+    async def scroll(
+        self,
+        collection_name: str,
+        limit: int = 100,
+        offset: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """Scroll through all points in a collection.
+        
+        Args:
+            collection_name: Collection name.
+            limit: Number of points to retrieve.
+            offset: Pagination offset (point ID).
+            
+        Returns:
+            List of points with their payloads.
+        """
+        result = await self.async_client.scroll(
+            collection_name=collection_name,
+            limit=limit,
+            offset=offset,
+        )
+        
+        points = result[0]  # First element is list of points
+        
+        return [
+            {
+                "id": str(point.id),
+                "payload": point.payload,
+            }
+            for point in points
+        ]
+
+    async def delete_by_filter(
+        self,
+        collection_name: str,
+        filter_condition: dict,
+    ) -> int:
+        """Delete points matching a filter condition.
+        
+        Args:
+            collection_name: Collection name.
+            filter_condition: Filter dict (e.g., {'key': 'source', 'match': {'value': 'file.pdf'}}).
+            
+        Returns:
+            Number of deleted points.
+        """
+        # First, count how many points match
+        count_result = await self.async_client.count(
+            collection_name=collection_name,
+            count_filter=qmodels.Filter(
+                must=[qmodels.FieldCondition(**filter_condition)]
+            ),
+        )
+        
+        # Delete matching points
+        await self.async_client.delete(
+            collection_name=collection_name,
+            points_selector=qmodels.FilterSelector(
+                filter=qmodels.Filter(
+                    must=[qmodels.FieldCondition(**filter_condition)]
+                )
+            ),
+            wait=True,
+        )
+        
+        return count_result.count
+
     async def close(self) -> None:
         """Close Qdrant connections."""
         if self._async_client:
@@ -336,6 +403,7 @@ class QdrantDB:
             self._client.close()
             self._client = None
         logger.info("Qdrant connections closed")
+
 
 
 # Global instance

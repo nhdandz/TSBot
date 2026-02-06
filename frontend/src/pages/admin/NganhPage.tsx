@@ -22,9 +22,9 @@ export default function NganhPage() {
     description: '',
   })
 
-  const { data: majors, isLoading } = useQuery({
+  const { data: majors = [], isLoading } = useQuery({
     queryKey: ['nganh'],
-    queryFn: adminService.getNganh,
+    queryFn: () => adminService.getNganh(),
   })
 
   const createMutation = useMutation({

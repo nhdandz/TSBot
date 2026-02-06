@@ -103,6 +103,8 @@ class LLMService:
         Returns:
             Generated text response.
         """
+        import re
+
         llm = self.grader_llm if use_grader else self.main_llm
 
         messages = []
@@ -111,7 +113,14 @@ class LLMService:
         messages.append(("human", prompt))
 
         response = await llm.ainvoke(messages, **kwargs)
-        return response.content
+        content = response.content
+
+        # Remove thinking tags (qwen3, deepseek-r1, and other reasoning models)
+        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL | re.IGNORECASE)
+        content = re.sub(r"<thinking>.*?</thinking>", "", content, flags=re.DOTALL | re.IGNORECASE)
+        content = content.strip()
+
+        return content
 
     async def generate_stream(
         self,

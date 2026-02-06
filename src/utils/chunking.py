@@ -201,9 +201,8 @@ class LegalDocumentChunker:
         if matches:
             preamble = text[: matches[0].start()].strip()
             if preamble and len(preamble) > 50:  # Meaningful preamble
-                articles.insert(
-                    (preamble, "0", "Phần mở đầu", 0), 0  # type: ignore
-                )
+                # insert(index, object) - index first, then object
+                articles.insert(0, (preamble, "0", "Phần mở đầu", 0))
         elif text.strip():
             # No articles found, treat entire text as one unit
             articles.append((text, "0", "", 0))

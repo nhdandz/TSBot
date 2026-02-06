@@ -3,6 +3,7 @@ import { Bot, User } from 'lucide-react'
 import type { ChatMessage } from '@/types'
 import { Card } from '@/components/ui/card'
 import { SourceDisplay } from './SourceDisplay'
+import { MarkdownContent } from './MarkdownContent'
 
 interface MessageListProps {
   messages: ChatMessage[]
@@ -49,15 +50,19 @@ export function MessageList({ messages, isTyping }: MessageListProps) {
             </div>
           )}
 
-          <div className={`flex flex-col max-w-[80%] ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
+          <div className={`flex flex-col max-w-[85%] ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
             <Card
-              className={`p-3 ${
+              className={`${
                 message.role === 'user'
-                  ? 'bg-primary-600 text-white'
-                  : 'bg-card border'
+                  ? 'p-3 bg-primary-600 text-white'
+                  : 'p-4 bg-white border shadow-sm'
               }`}
             >
-              <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+              {message.role === 'user' ? (
+                <p className="text-sm whitespace-pre-wrap leading-relaxed">{message.content}</p>
+              ) : (
+                <MarkdownContent content={message.content} />
+              )}
             </Card>
 
             {message.sources && message.sources.length > 0 && (

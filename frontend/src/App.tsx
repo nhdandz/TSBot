@@ -6,6 +6,7 @@ import DashboardPage from '@/pages/admin/DashboardPage'
 import TruongPage from '@/pages/admin/TruongPage'
 import NganhPage from '@/pages/admin/NganhPage'
 import DiemChuanPage from '@/pages/admin/DiemChuanPage'
+import DocumentsPage from '@/pages/admin/DocumentsPage'
 import AdminLayout from '@/components/layout/AdminLayout'
 import { useAuthStore } from '@/stores/authStore'
 
@@ -41,6 +42,7 @@ function App() {
           <Route path="truong" element={<TruongPage />} />
           <Route path="nganh" element={<NganhPage />} />
           <Route path="diem-chuan" element={<DiemChuanPage />} />
+          <Route path="documents" element={<DocumentsPage />} />
         </Route>
       </Routes>
       <Toaster />
@@ -49,3 +51,4 @@ function App() {
 }
 
 export default App
+

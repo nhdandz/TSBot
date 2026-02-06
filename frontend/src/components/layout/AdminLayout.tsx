@@ -10,6 +10,7 @@ import {
   LogOut,
   Shield,
   Menu,
+  FileText,
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -34,6 +35,11 @@ const navItems = [
     href: '/admin/diem-chuan',
     icon: BarChart3,
   },
+  {
+    title: 'Văn bản',
+    href: '/admin/documents',
+    icon: FileText,
+  },
 ]
 
 export default function AdminLayout() {
@@ -51,9 +57,8 @@ export default function AdminLayout() {
     <div className="flex h-screen bg-background">
       {/* Sidebar */}
       <aside
-        className={`${
-          sidebarOpen ? 'w-64' : 'w-20'
-        } border-r bg-card transition-all duration-300 flex flex-col`}
+        className={`${sidebarOpen ? 'w-64' : 'w-20'
+          } border-r bg-card transition-all duration-300 flex flex-col`}
       >
         {/* Header */}
         <div className="p-4 border-b">
@@ -93,9 +98,8 @@ export default function AdminLayout() {
               <Link key={item.href} to={item.href}>
                 <Button
                   variant={isActive ? 'default' : 'ghost'}
-                  className={`w-full justify-start gap-3 ${
-                    isActive ? 'bg-military-600 hover:bg-military-700' : ''
-                  } ${!sidebarOpen ? 'justify-center' : ''}`}
+                  className={`w-full justify-start gap-3 ${isActive ? 'bg-military-600 hover:bg-military-700' : ''
+                    } ${!sidebarOpen ? 'justify-center' : ''}`}
                 >
                   <Icon className="w-5 h-5" />
                   {sidebarOpen && <span>{item.title}</span>}

@@ -514,29 +514,236 @@ async def import_diem_chuan(
     )
 
 
-# Document reindexing endpoint
-@router.post("/documents/reindex")
-async def reindex_documents(
+# Document Management Endpoints
+@router.post("/documents/upload")
+async def upload_document(
+    file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    """Trigger re-indexing of legal documents.
+    """Upload and index a legal document.
 
-    This will re-process all documents in the documents directory
-    and update the vector database.
+    Accepts PDF, DOCX, or TXT files. The document will be:
+    1. Text extracted
+    2. Chunked using LegalDocumentChunker
+    3. Embedded
+    4. Indexed into Qdrant
     """
+    logger.info(f"=== UPLOAD DOCUMENT START ===")
+    logger.info(f"User: {current_user.username} (is_superuser: {current_user.is_superuser})")
+    logger.info(f"File: {file.filename if file.filename else 'NO FILENAME'}")
+    logger.info(f"Content-Type: {file.content_type if hasattr(file, 'content_type') else 'UNKNOWN'}")
+
+    if not current_user.is_superuser:
+        logger.warning(f"Non-superuser {current_user.username} attempted to upload document")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chỉ admin mới có thể upload tài liệu",
+        )
+
+    if not file.filename:
+        logger.error("No filename provided in upload request")
+        raise HTTPException(status_code=400, detail="Vui lòng chọn file")
+
+    logger.info(f"Upload request from {current_user.username}: {file.filename}")
+    
+    # Validate file type
+    allowed_extensions = {".pdf", ".docx", ".txt"}
+    
+    # Safe extension extraction
+    if "." not in file.filename:
+        raise HTTPException(status_code=400, detail="File không có phần mở rộng")
+    
+    file_ext = file.filename[file.filename.rfind("."):].lower()
+    logger.debug(f"Detected file extension: {file_ext}")
+    
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Chỉ hỗ trợ file PDF, DOCX, TXT. File của bạn: {file_ext}"
+        )
+
+
+    try:
+        # Read file content
+        logger.info(f"Reading file content...")
+        content_bytes = await file.read()
+        logger.info(f"Read {len(content_bytes)} bytes from file")
+
+        if len(content_bytes) == 0:
+            logger.error("File is empty (0 bytes)")
+            raise HTTPException(status_code=400, detail="File rỗng")
+
+        # Extract text based on file type
+        logger.info(f"Extracting text from {file_ext} file...")
+        if file_ext == ".txt":
+            text = content_bytes.decode("utf-8")
+        elif file_ext == ".docx":
+            from docx import Document
+            doc = Document(io.BytesIO(content_bytes))
+            text = "\n".join([para.text for para in doc.paragraphs])
+        elif file_ext == ".pdf":
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(content_bytes))
+            text_parts = [page.extract_text() for page in reader.pages]
+            text = "\n".join(text_parts)
+        else:
+            logger.error(f"Unsupported file extension: {file_ext}")
+            raise HTTPException(status_code=400, detail="Định dạng file không hỗ trợ")
+
+        logger.info(f"Extracted {len(text)} characters of text")
+
+        if not text.strip():
+            logger.error("Extracted text is empty")
+            raise HTTPException(status_code=400, detail="File rỗng hoặc không đọc được")
+        
+        # Import services
+        from src.core.embeddings import get_embedding_service
+        from src.database.qdrant import get_qdrant_db
+        from src.utils.chunking import LegalDocumentChunker
+        
+        embedding_service = get_embedding_service()
+        qdrant = get_qdrant_db()
+        
+        # Chunk document
+        chunker = LegalDocumentChunker(
+            chunk_size=settings.rag_chunk_size,
+            chunk_overlap=settings.rag_chunk_overlap,
+            respect_structure=True,
+        )
+        
+        doc_metadata = {
+            "source": file.filename,
+            "uploaded_by": current_user.username,
+            "uploaded_at": datetime.utcnow().isoformat(),
+        }
+        
+        chunks = chunker.chunk_document(text, doc_metadata)
+        logger.info(f"Created {len(chunks)} chunks from {file.filename}")
+        
+        # Embed chunks
+        chunk_texts = [c.content for c in chunks]
+        embeddings = embedding_service.encode_documents(chunk_texts, show_progress=False)
+        
+        # Prepare payloads
+        payloads = []
+        vectors = []
+        for i, chunk in enumerate(chunks):
+            payload = {
+                "content": chunk.content,
+                **chunk.metadata,
+            }
+            payloads.append(payload)
+            vectors.append(embeddings[i].tolist())
+        
+        # Index to Qdrant
+        await qdrant.upsert_vectors(
+            collection_name=settings.qdrant_legal_collection,
+            vectors=vectors,
+            payloads=payloads,
+        )
+
+        logger.info(
+            f"✅ Successfully indexed {len(chunks)} chunks from {file.filename} by {current_user.username}"
+        )
+        logger.info(f"=== UPLOAD DOCUMENT END ===")
+
+        return {
+            "success": True,
+            "message": f"Đã index {len(chunks)} chunks từ {file.filename}",
+            "filename": file.filename,
+            "chunks": len(chunks),
+            "collection": settings.qdrant_legal_collection,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error uploading document: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Lỗi xử lý file: {str(e)}"
+        )
+
+
+@router.get("/documents")
+async def list_documents(
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """List all documents in the vector database."""
+    try:
+        from src.database.qdrant import get_qdrant_db
+        qdrant = get_qdrant_db()
+        
+        # Get all documents (scroll through collection)
+        # Group by source filename
+        points = await qdrant.scroll(
+            collection_name=settings.qdrant_legal_collection,
+            limit=1000,  # Adjust if needed
+        )
+        
+        # Group by source
+        docs_map = {}
+        for point in points:
+            payload = point.get("payload", {})
+            source = payload.get("source", "Unknown")
+            
+            if source not in docs_map:
+                docs_map[source] = {
+                    "filename": source,
+                    "chunks": 0,
+                    "uploaded_by": payload.get("uploaded_by", "Unknown"),
+                    "uploaded_at": payload.get("uploaded_at", "Unknown"),
+                }
+            docs_map[source]["chunks"] += 1
+        
+        documents = list(docs_map.values())
+        
+        return {
+            "total": len(documents),
+            "documents": documents,
+        }
+        
+    except Exception as e:
+        logger.error(f"Error listing documents: {e}")
+        raise HTTPException(status_code=500, detail=f"Lỗi: {str(e)}")
+
+
+@router.delete("/documents/{filename}")
+async def delete_document(
+    filename: str,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Delete all chunks of a document from the vector database."""
     if not current_user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Chỉ admin mới có thể thực hiện",
+            detail="Chỉ admin mới có thể xóa tài liệu",
         )
-
-    # TODO: Implement background task for reindexing
-    logger.info(f"Document reindex triggered by {current_user.username}")
-
-    return {
-        "message": "Đã bắt đầu quá trình index lại văn bản",
-        "status": "processing",
-    }
+    
+    try:
+        from src.database.qdrant import get_qdrant_db
+        qdrant = get_qdrant_db()
+        
+        # Delete points by metadata filter
+        deleted_count = await qdrant.delete_by_filter(
+            collection_name=settings.qdrant_legal_collection,
+            filter_condition={
+                "key": "source",
+                "match": {"value": filename}
+            }
+        )
+        
+        logger.info(f"Deleted {deleted_count} chunks of {filename} by {current_user.username}")
+        
+        return {
+            "success": True,
+            "message": f"Đã xóa {deleted_count} chunks của {filename}",
+            "deleted_chunks": deleted_count,
+        }
+        
+    except Exception as e:
+        logger.error(f"Error deleting document: {e}")
+        raise HTTPException(status_code=500, detail=f"Lỗi: {str(e)}")
 
 
 # Statistics endpoint
@@ -552,12 +759,22 @@ async def get_stats(
 
     # Latest year
     latest_year = await session.scalar(select(func.max(DiemChuan.nam)))
+    
+    # Document count from Qdrant
+    try:
+        from src.database.qdrant import get_qdrant_db
+        qdrant = get_qdrant_db()
+        doc_count = await qdrant.count_points(settings.qdrant_legal_collection)
+    except:
+        doc_count = 0
 
     return {
         "total_schools": truong_count or 0,
         "total_majors": nganh_count or 0,
         "total_scores": diem_chuan_count or 0,
+        "total_documents": doc_count or 0,
         "total_chats": 0,
         "recent_chats": 0,
         "latest_year": latest_year,
     }
+
