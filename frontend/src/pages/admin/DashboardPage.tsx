@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { adminService } from '@/services/adminService'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -15,79 +14,69 @@ export default function DashboardPage() {
       title: 'Trường quân đội',
       value: stats?.total_schools || 0,
       icon: School,
-      color: 'text-primary-600',
-      bgColor: 'bg-primary-100',
     },
     {
       title: 'Ngành đào tạo',
       value: stats?.total_majors || 0,
       icon: GraduationCap,
-      color: 'text-military-600',
-      bgColor: 'bg-military-100',
     },
     {
       title: 'Điểm chuẩn',
       value: stats?.total_scores || 0,
       icon: BarChart3,
-      color: 'text-warning-600',
-      bgColor: 'bg-warning-100',
     },
     {
       title: 'Tổng cuộc trò chuyện',
       value: stats?.total_chats || 0,
       icon: MessageSquare,
-      color: 'text-purple-600',
-      bgColor: 'bg-purple-100',
     },
     {
       title: 'Trò chuyện gần đây',
       value: stats?.recent_chats || 0,
       icon: TrendingUp,
-      color: 'text-blue-600',
-      bgColor: 'bg-blue-100',
     },
     {
       title: 'Đánh giá trung bình',
       value: stats?.avg_feedback_rating ? stats.avg_feedback_rating.toFixed(1) : 'N/A',
       icon: Users,
-      color: 'text-green-600',
-      bgColor: 'bg-green-100',
     },
   ]
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <div>
-        <h1 className="text-3xl font-bold">Dashboard</h1>
-        <p className="text-muted-foreground mt-1">
+        <h1 className="text-2xl font-bold tracking-tighter">Dashboard</h1>
+        <p className="text-sm text-muted-foreground mt-1">
           Tổng quan hệ thống tư vấn tuyển sinh quân đội
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
         {statCards.map((stat) => {
           const Icon = stat.icon
           return (
-            <Card key={stat.title}>
-              <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-                <CardTitle className="text-sm font-medium">
-                  {stat.title}
-                </CardTitle>
-                <div className={`p-2 rounded-lg ${stat.bgColor}`}>
-                  <Icon className={`w-4 h-4 ${stat.color}`} />
+            <Card key={stat.title} className="group hover:shadow-soft-md">
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="w-9 h-9 rounded-xl bg-muted/50 flex items-center justify-center group-hover:scale-105 transition-transform duration-300 ease-apple">
+                    <Icon className="w-4 h-4 text-muted-foreground" />
+                  </div>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  {isLoading ? '...' : stat.value}
-                </div>
+                <p className="text-2xl font-bold tracking-tighter">
+                  {isLoading ? (
+                    <span className="shimmer inline-block w-12 h-7 rounded-lg" />
+                  ) : (
+                    stat.value
+                  )}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">{stat.title}</p>
               </CardContent>
             </Card>
           )
         })}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
           <CardHeader>
             <CardTitle>Thông tin hệ thống</CardTitle>
@@ -95,23 +84,21 @@ export default function DashboardPage() {
               Trạng thái và cấu hình hiện tại
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="flex justify-between border-b pb-2">
-              <span className="text-sm text-muted-foreground">Backend API</span>
-              <span className="text-sm font-medium text-success-600">Hoạt động</span>
-            </div>
-            <div className="flex justify-between border-b pb-2">
-              <span className="text-sm text-muted-foreground">Database</span>
-              <span className="text-sm font-medium text-success-600">Kết nối</span>
-            </div>
-            <div className="flex justify-between border-b pb-2">
-              <span className="text-sm text-muted-foreground">Vector DB</span>
-              <span className="text-sm font-medium text-success-600">Sẵn sàng</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-sm text-muted-foreground">AI Model</span>
-              <span className="text-sm font-medium text-success-600">Đang chạy</span>
-            </div>
+          <CardContent className="space-y-3">
+            {[
+              { label: 'Backend API', status: 'Hoạt động' },
+              { label: 'Database', status: 'Kết nối' },
+              { label: 'Vector DB', status: 'Sẵn sàng' },
+              { label: 'AI Model', status: 'Đang chạy' },
+            ].map((item, i) => (
+              <div key={item.label} className={`flex justify-between py-2 ${i < 3 ? 'border-b border-border/40' : ''}`}>
+                <span className="text-sm text-muted-foreground">{item.label}</span>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-success" />
+                  <span className="text-sm font-medium text-foreground">{item.status}</span>
+                </div>
+              </div>
+            ))}
           </CardContent>
         </Card>
 
@@ -138,12 +125,19 @@ export default function DashboardPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <ul className="list-disc list-inside space-y-2 text-sm text-muted-foreground">
-            <li>Sử dụng menu bên trái để điều hướng đến các trang quản lý</li>
-            <li>Trang "Trường" để quản lý danh sách các trường quân đội</li>
-            <li>Trang "Ngành" để quản lý danh sách các ngành đào tạo</li>
-            <li>Trang "Điểm chuẩn" để quản lý điểm chuẩn tuyển sinh theo năm</li>
-            <li>Dữ liệu sẽ được sử dụng bởi chatbot AI để tư vấn cho thí sinh</li>
+          <ul className="space-y-2.5 text-sm text-muted-foreground">
+            {[
+              'Sử dụng menu bên trái để điều hướng đến các trang quản lý',
+              'Trang "Trường" để quản lý danh sách các trường quân đội',
+              'Trang "Ngành" để quản lý danh sách các ngành đào tạo',
+              'Trang "Điểm chuẩn" để quản lý điểm chuẩn tuyển sinh theo năm',
+              'Dữ liệu sẽ được sử dụng bởi chatbot AI để tư vấn cho thí sinh',
+            ].map((text) => (
+              <li key={text} className="flex items-start gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-olive mt-1.5 shrink-0" />
+                <span>{text}</span>
+              </li>
+            ))}
           </ul>
         </CardContent>
       </Card>

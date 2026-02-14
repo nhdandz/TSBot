@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useEffect } from 'react'
+import { useMutation } from '@tanstack/react-query'
 import { MessageList } from '@/components/chat/MessageList'
 import { ChatInput } from '@/components/chat/ChatInput'
 import { useChatStore } from '@/stores/chatStore'
@@ -24,7 +24,6 @@ export default function ChatPage() {
     resetSession,
   } = useChatStore()
 
-  // Load chat history on mount
   useEffect(() => {
     const loadHistory = async () => {
       try {
@@ -41,7 +40,6 @@ export default function ChatPage() {
     loadHistory()
   }, [sessionId, setMessages])
 
-  // Send message mutation
   const sendMessageMutation = useMutation({
     mutationFn: chatService.sendMessage,
     onSuccess: (data) => {
@@ -69,7 +67,6 @@ export default function ChatPage() {
   })
 
   const handleSendMessage = async (content: string) => {
-    // Add user message immediately
     const userMessage: ChatMessage = {
       role: 'user',
       content,
@@ -79,7 +76,6 @@ export default function ChatPage() {
     setIsLoading(true)
     setIsTyping(true)
 
-    // Send to API
     sendMessageMutation.mutate({
       message: content,
       session_id: sessionId,
@@ -95,39 +91,43 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gradient-to-br from-primary-50 via-background to-military-50">
+    <div className="flex flex-col h-screen bg-gradient-chat">
       {/* Header */}
-      <header className="border-b bg-white/80 backdrop-blur-sm shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+      <header className="border-b border-border/40 glass-strong">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-military-600 to-primary-600 rounded-lg flex items-center justify-center">
-              <Shield className="w-6 h-6 text-white" />
+            <div className="w-10 h-10 bg-gradient-military rounded-xl flex items-center justify-center shadow-soft-sm">
+              <Shield className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-foreground">
-                TSBot - Tư vấn Tuyển sinh Quân đội
+              <h1 className="text-base font-bold tracking-tighter text-foreground">
+                TSBot
               </h1>
               <p className="text-xs text-muted-foreground">
-                Chatbot AI hỗ trợ thí sinh tìm hiểu về tuyển sinh quân sự Việt Nam
+                Tư vấn tuyển sinh quân đội
               </p>
             </div>
           </div>
 
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             onClick={handleResetChat}
-            className="gap-2"
+            className="gap-2 text-muted-foreground hover:text-foreground"
           >
-            <RefreshCw className="w-4 h-4" />
-            Reset
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Cuộc trò chuyện mới</span>
           </Button>
         </div>
       </header>
 
       {/* Chat Area */}
-      <main className="flex-1 flex flex-col max-w-5xl w-full mx-auto bg-white/60 backdrop-blur-sm shadow-lg my-4 rounded-lg overflow-hidden">
-        <MessageList messages={messages} isTyping={isTyping} />
+      <main className="flex-1 flex flex-col max-w-4xl w-full mx-auto overflow-hidden">
+        <MessageList
+          messages={messages}
+          isTyping={isTyping}
+          onSuggestionClick={handleSendMessage}
+        />
         <ChatInput
           onSendMessage={handleSendMessage}
           disabled={isLoading}
@@ -136,15 +136,10 @@ export default function ChatPage() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t bg-white/80 backdrop-blur-sm py-3">
-        <div className="max-w-7xl mx-auto px-4 text-center text-xs text-muted-foreground">
-          <p>
-            © 2026 TSBot - Hệ thống chatbot AI tư vấn tuyển sinh quân đội. Phát triển bởi AI Team.
-          </p>
-          <p className="mt-1">
-            Thông tin chỉ mang tính tham khảo. Vui lòng kiểm tra lại với cơ quan chức năng.
-          </p>
-        </div>
+      <footer className="py-3 px-6">
+        <p className="text-center text-[11px] text-muted-foreground/60">
+          Thông tin chỉ mang tính tham khảo. Vui lòng kiểm tra lại với cơ quan chức năng.
+        </p>
       </footer>
     </div>
   )

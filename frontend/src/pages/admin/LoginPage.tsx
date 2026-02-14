@@ -4,7 +4,6 @@ import { useAuthStore } from '@/stores/authStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Shield, Loader2 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 
@@ -44,19 +43,20 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-50 via-background to-military-50">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <div className="mx-auto w-16 h-16 bg-military-gradient rounded-2xl flex items-center justify-center mb-4">
-            <Shield className="w-10 h-10 text-white" />
+    <div className="min-h-screen flex items-center justify-center bg-gradient-chat p-4">
+      <div className="w-full max-w-[380px] animate-fade-in-up">
+        {/* Logo */}
+        <div className="text-center mb-8">
+          <div className="mx-auto w-14 h-14 bg-gradient-military rounded-2xl flex items-center justify-center shadow-soft-md mb-5">
+            <Shield className="w-7 h-7 text-white" />
           </div>
-          <CardTitle className="text-2xl">TSBot Admin</CardTitle>
-          <CardDescription>
-            Đăng nhập vào hệ thống quản trị
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <h1 className="text-xl font-bold tracking-tighter text-foreground">TSBot Admin</h1>
+          <p className="text-sm text-muted-foreground mt-1">Đăng nhập vào hệ thống quản trị</p>
+        </div>
+
+        {/* Form Card */}
+        <div className="rounded-2xl border border-border/50 bg-card shadow-soft-lg p-8">
+          <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-2">
               <Label htmlFor="username">Tên đăng nhập</Label>
               <Input
@@ -83,7 +83,7 @@ export default function LoginPage() {
             </div>
             <Button
               type="submit"
-              className="w-full bg-military-600 hover:bg-military-700"
+              className="w-full h-11"
               disabled={isLoading}
             >
               {isLoading ? (
@@ -96,11 +96,12 @@ export default function LoginPage() {
               )}
             </Button>
           </form>
-          <div className="mt-6 text-center text-sm text-muted-foreground">
-            <p>Chỉ dành cho quản trị viên hệ thống</p>
-          </div>
-        </CardContent>
-      </Card>
+        </div>
+
+        <p className="text-center text-xs text-muted-foreground/60 mt-6">
+          Chỉ dành cho quản trị viên hệ thống
+        </p>
+      </div>
     </div>
   )
 }

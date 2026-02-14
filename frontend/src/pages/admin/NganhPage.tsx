@@ -5,8 +5,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Plus, Pencil, Trash2, Loader2 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
@@ -18,7 +18,7 @@ export default function NganhPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingMajor, setEditingMajor] = useState<Nganh | null>(null)
   const [formData, setFormData] = useState({
-    truong_id: null as number | null,
+    truong_id: undefined as number | undefined,
     major_code: '',
     major_name: '',
     description: '',
@@ -61,14 +61,13 @@ export default function NganhPage() {
     },
   })
 
-  // Fetch schools for dropdown
   const { data: schools } = useQuery({
     queryKey: ['truong'],
     queryFn: adminService.getTruong,
   })
 
   const resetForm = () => {
-    setFormData({ truong_id: null, major_code: '', major_name: '', description: '' })
+    setFormData({ truong_id: undefined, major_code: '', major_name: '', description: '' })
     setEditingMajor(null)
   }
 
@@ -84,7 +83,7 @@ export default function NganhPage() {
   const handleEdit = (major: Nganh) => {
     setEditingMajor(major)
     setFormData({
-      truong_id: major.truong_id || null,
+      truong_id: major.truong_id,
       major_code: major.major_code,
       major_name: major.major_name,
       description: major.description || '',
@@ -93,16 +92,16 @@ export default function NganhPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Quản lý Ngành</h1>
-          <p className="text-muted-foreground mt-1">Danh sách các ngành đào tạo</p>
+          <h1 className="text-2xl font-bold tracking-tighter">Quản lý Ngành</h1>
+          <p className="text-sm text-muted-foreground mt-1">Danh sách các ngành đào tạo</p>
         </div>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
-            <Button className="bg-military-600 hover:bg-military-700" onClick={resetForm}>
-              <Plus className="w-4 h-4 mr-2" />
+            <Button onClick={resetForm}>
+              <Plus className="w-4 h-4" />
               Thêm ngành
             </Button>
           </DialogTrigger>
@@ -110,7 +109,7 @@ export default function NganhPage() {
             <DialogHeader>
               <DialogTitle>{editingMajor ? 'Chỉnh sửa ngành' : 'Thêm ngành mới'}</DialogTitle>
             </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} className="space-y-5">
               <div className="space-y-2">
                 <Label>Trường *</Label>
                 <Select
@@ -158,7 +157,10 @@ export default function NganhPage() {
               </div>
               <div className="flex gap-2 justify-end">
                 <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>Hủy</Button>
-                <Button type="submit" className="bg-military-600 hover:bg-military-700">
+                <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
+                  {(createMutation.isPending || updateMutation.isPending) && (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  )}
                   {editingMajor ? 'Cập nhật' : 'Thêm'}
                 </Button>
               </div>
@@ -168,13 +170,13 @@ export default function NganhPage() {
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Danh sách ngành ({majors?.length || 0})</CardTitle>
+        <CardHeader className="pb-4">
+          <CardTitle className="text-base">Danh sách ({majors?.length || 0})</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0">
           {isLoading ? (
             <div className="flex justify-center p-8">
-              <Loader2 className="w-8 h-8 animate-spin text-military-600" />
+              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
             </div>
           ) : majors && majors.length > 0 ? (
             <Table>
@@ -191,22 +193,23 @@ export default function NganhPage() {
                 {majors.map((major) => (
                   <TableRow key={`${major.truong_id}-${major.major_code}`}>
                     <TableCell className="font-medium">{major.school_name || '-'}</TableCell>
-                    <TableCell className="font-mono">{major.major_code}</TableCell>
+                    <TableCell className="font-mono text-xs">{major.major_code}</TableCell>
                     <TableCell>{major.major_name}</TableCell>
-                    <TableCell>{major.description || '-'}</TableCell>
+                    <TableCell className="text-muted-foreground max-w-[200px] truncate">{major.description || '-'}</TableCell>
                     <TableCell className="text-right">
-                      <div className="flex gap-2 justify-end">
-                        <Button variant="outline" size="icon" onClick={() => handleEdit(major)}>
-                          <Pencil className="w-4 h-4" />
+                      <div className="flex gap-1.5 justify-end">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg" onClick={() => handleEdit(major)}>
+                          <Pencil className="w-3.5 h-3.5" />
                         </Button>
                         <Button
-                          variant="destructive"
+                          variant="ghost"
                           size="icon"
+                          className="h-8 w-8 rounded-lg text-destructive hover:text-destructive hover:bg-destructive/10"
                           onClick={() => {
                             if (confirm('Xóa ngành này?')) deleteMutation.mutate(major.major_code)
                           }}
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       </div>
                     </TableCell>
@@ -215,7 +218,7 @@ export default function NganhPage() {
               </TableBody>
             </Table>
           ) : (
-            <div className="text-center p-8 text-muted-foreground">Chưa có dữ liệu</div>
+            <div className="text-center p-8 text-sm text-muted-foreground">Chưa có dữ liệu</div>
           )}
         </CardContent>
       </Card>
