@@ -83,9 +83,8 @@ class Settings(BaseSettings):
     ollama_grader_model: str = "qwen2.5:1.5b"
     ollama_grader_temperature: float = 0.0
 
-    # Embeddings
-    embedding_model: str = "AITeamVN/Vietnamese_Embedding"
-    embedding_fallback_model: str = "nomic-embed-text"
+    # Embeddings (Ollama)
+    embedding_model: str = "bge-m3"
     embedding_dimension: int = 1024
 
     # RAG
@@ -100,16 +99,44 @@ class Settings(BaseSettings):
     use_query_analysis: bool = True
     use_query_expansion: bool = True
     use_smart_retrieval: bool = True
-    
+
     # Cache
     cache_similarity_threshold: float = 0.92
     cache_ttl_hours: int = 24
-    
+
     # Reranker
     reranker_model: str = "namdp-ptit/ViRanker"
     reranker_top_k: int = 3
-    # Weights: cross_encoder, retrieval, metadata
     reranker_weights: dict = {"cross_encoder": 0.55, "retrieval": 0.35, "metadata": 0.10}
+
+    # Advanced RAG (from backend_v2)
+    use_cross_encoder: bool = True
+    cross_encoder_model: str = "BAAI/bge-reranker-v2-m3"
+    reranker_ensemble: bool = True
+    use_enriched_embeddings: bool = True
+    parent_context_length: int = 200
+    title_path_levels: int = 3
+    dedup_threshold: float = 0.95
+    bm25_k1: float = 1.5
+    bm25_b: float = 0.75
+    rrf_k: int = 60
+    max_chunks_multi: int = 3
+    max_smart_descendants: int = 5
+    min_descendant_score: float = 0.3
+    max_smart_siblings: int = 3
+    min_sibling_score: float = 0.4
+
+    # Adaptive context settings per intent
+    context_settings: dict = {
+        "specific": {"chunks": 2, "max_descendants": 5, "max_siblings": 2, "include_parents": True},
+        "comparison": {"chunks": 2, "max_descendants": 2, "max_siblings": 3, "include_parents": True},
+        "list": {"chunks": 2, "max_descendants": 40, "max_siblings": 5, "include_parents": True},
+        "explanation": {"chunks": 3, "max_descendants": 4, "max_siblings": 3, "include_parents": True},
+        "general": {"chunks": 3, "max_descendants": 5, "max_siblings": 2, "include_parents": True},
+    }
+
+    # Chunks JSON path
+    chunks_json_path: str = "output_admission/chunks.json"
 
     # SQL Agent
     sql_max_retries: int = 3

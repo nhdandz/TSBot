@@ -4,6 +4,7 @@ import { adminService } from '@/services/adminService'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -17,6 +18,7 @@ export default function NganhPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingMajor, setEditingMajor] = useState<Nganh | null>(null)
   const [formData, setFormData] = useState({
+    truong_id: null as number | null,
     major_code: '',
     major_name: '',
     description: '',
@@ -59,8 +61,14 @@ export default function NganhPage() {
     },
   })
 
+  // Fetch schools for dropdown
+  const { data: schools } = useQuery({
+    queryKey: ['truong'],
+    queryFn: adminService.getTruong,
+  })
+
   const resetForm = () => {
-    setFormData({ major_code: '', major_name: '', description: '' })
+    setFormData({ truong_id: null, major_code: '', major_name: '', description: '' })
     setEditingMajor(null)
   }
 
@@ -76,6 +84,7 @@ export default function NganhPage() {
   const handleEdit = (major: Nganh) => {
     setEditingMajor(major)
     setFormData({
+      truong_id: major.truong_id || null,
       major_code: major.major_code,
       major_name: major.major_name,
       description: major.description || '',
@@ -102,6 +111,24 @@ export default function NganhPage() {
               <DialogTitle>{editingMajor ? 'Chỉnh sửa ngành' : 'Thêm ngành mới'}</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label>Trường *</Label>
+                <Select
+                  value={formData.truong_id?.toString() || ''}
+                  onValueChange={(value) => setFormData({ ...formData, truong_id: parseInt(value) })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Chọn trường" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {schools?.map((school) => (
+                      <SelectItem key={school.id} value={school.id?.toString() || ''}>
+                        {school.school_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="space-y-2">
                 <Label>Mã ngành *</Label>
                 <Input

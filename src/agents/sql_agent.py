@@ -21,27 +21,57 @@ logger = logging.getLogger(__name__)
 # SQL generation system prompt
 SQL_SYSTEM_PROMPT = """Bạn là chuyên gia SQL cho hệ thống tra cứu điểm chuẩn tuyển sinh quân sự Việt Nam.
 
-## Schema Database:
-- truong(id, ma_truong, ten_truong, ten_khong_dau, loai_truong, dia_chi, website)
-- nganh(id, truong_id, ma_nganh, ten_nganh, ten_khong_dau)
-- khoi_thi(id, ma_khoi, ten_khoi, mon_hoc)
-- diem_chuan(id, nganh_id, khoi_thi_id, nam, diem_chuan, chi_tieu, gioi_tinh, khu_vuc, doi_tuong, ghi_chu)
+## QUAN TRỌNG: Chỉ sử dụng view_tra_cuu_diem, KHÔNG truy vấn trực tiếp các bảng gốc.
 
-## View có sẵn:
-- view_tra_cuu_diem: JOIN sẵn các bảng với các cột (diem_chuan_id, ma_truong, ten_truong, loai_truong, ma_nganh, ten_nganh, ma_khoi, ten_khoi, mon_hoc, nam, diem_chuan, chi_tieu, gioi_tinh, khu_vuc, doi_tuong, ghi_chu)
+## Các cột trong view_tra_cuu_diem:
+| Cột | Kiểu | Mô tả | Ví dụ |
+|-----|------|--------|-------|
+| diem_chuan_id | int | ID bản ghi | 1 |
+| ma_truong | text | Mã trường | 'HVKTQS' |
+| ten_truong | text | Tên trường (có dấu) | 'Học viện Kỹ thuật Quân sự' |
+| ten_khong_dau | text | Tên trường không dấu | 'hoc vien ky thuat quan su' |
+| loai_truong | text | Mã loại trường | 'HVKTQS' |
+| ma_nganh | text | Mã ngành | 'CN01' |
+| ten_nganh | text | Tên ngành | 'Công nghệ thông tin' |
+| ten_nganh_khong_dau | text | Tên ngành không dấu | 'cong nghe thong tin' |
+| ma_khoi | text | Mã khối thi | 'A00', 'A01', 'B00' |
+| ten_khoi | text | Tên khối thi | 'Toán-Lý-Hóa' |
+| mon_hoc | text | Các môn học trong khối | 'Toán, Lý, Hóa' |
+| nam | int | Năm tuyển sinh | 2024 |
+| diem_chuan | float | Điểm chuẩn | 26.5 |
+| chi_tieu | int | Chỉ tiêu tuyển | 50 |
+| gioi_tinh | text | Giới tính | 'Nam', 'Nữ' |
+| khu_vuc | text | Khu vực | 'KV1', 'KV2' |
+| doi_tuong | text | Đối tượng | 'ĐT1' |
+| ghi_chu | text | Ghi chú | |
 
-## Quy tắc:
-1. Luôn sử dụng view_tra_cuu_diem cho các truy vấn điểm chuẩn
-2. Sử dụng hàm unaccent() hoặc cột ten_khong_dau để tìm kiếm tiếng Việt không dấu
-3. Sử dụng ILIKE với % để tìm kiếm gần đúng
-4. Mặc định lấy năm gần nhất nếu không chỉ định năm
-5. Giới hạn kết quả với LIMIT để tránh trả về quá nhiều dữ liệu
-6. CHỈ trả về câu SQL, không giải thích
+## Quy tắc BẮT BUỘC:
+1. LUÔN dùng view_tra_cuu_diem. KHÔNG dùng bảng gốc (truong, nganh, khoi_thi, diem_chuan)
+2. Lọc khối thi bằng: ma_khoi = 'A01' (KHÔNG dùng khoi_thi_id)
+3. **Lọc trường bằng ten_khong_dau** (KHÔNG dùng ma_truong, loai_truong, truong_id, nganh_id):
+   - ĐÚNG: ten_khong_dau ILIKE '%hoc vien hai quan%'
+   - SAI: ma_truong ILIKE '%hoc vien hai quan%'
+4. **Lọc ngành bằng ten_nganh_khong_dau** (KHÔNG dùng ma_nganh để tìm theo tên):
+   - ĐÚNG: ten_nganh_khong_dau ILIKE '%cong nghe thong tin%'
+5. Sử dụng ILIKE với % để tìm kiếm gần đúng
+6. Mặc định lấy năm gần nhất nếu không chỉ định năm
+7. Giới hạn kết quả với LIMIT để tránh trả về quá nhiều dữ liệu
+8. CHỈ trả về câu SQL, không giải thích
+9. Khi người dùng hỏi "có đỗ trường X không" hoặc "X điểm vào trường Y được không", hãy lấy điểm chuẩn của trường Y để so sánh, KHÔNG lọc theo diem_chuan <= X
+10. **CHỈ lọc theo khối (ma_khoi) khi người dùng NÊU RÕ khối thi**. Nếu hỏi "các ngành" hoặc "điểm chuẩn trường X" mà KHÔNG nói khối cụ thể → KHÔNG thêm WHERE ma_khoi
+
+## Ví dụ ĐÚNG/SAI:
+
+Câu hỏi: "Điểm chuẩn các ngành của học viện hải quân năm 2025"
+- SAI: SELECT ... WHERE ma_khoi = 'A00' AND ten_khong_dau ILIKE '%hoc vien hai quan%' AND nam = 2025 (tự thêm ma_khoi mà user KHÔNG hỏi)
+- ĐÚNG: SELECT ten_nganh, ma_khoi, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien hai quan%' AND nam = 2025 ORDER BY ten_nganh, ma_khoi LIMIT 50;
+
+Câu hỏi: "Điểm chuẩn khối A01 học viện hải quân năm 2025"
+- ĐÚNG: SELECT ... WHERE ten_khong_dau ILIKE '%hoc vien hai quan%' AND ma_khoi = 'A01' AND nam = 2025 (user NÊU RÕ khối A01)
 
 ## Lưu ý về tìm kiếm tên:
 - Người dùng có thể nhập không dấu: "hoc vien ky thuat quan su"
-- Sử dụng: LOWER(unaccent(ten_truong)) LIKE LOWER(unaccent('%input%'))
-- Hoặc: ten_khong_dau LIKE '%input%'"""
+- Sử dụng: ten_khong_dau ILIKE '%hoc vien ky thuat quan su%'"""
 
 
 # SQL validation prompt
@@ -96,6 +126,7 @@ class SQLAgent:
             Dictionary with query, sql, results, and answer.
         """
         logger.info(f"Processing SQL query: {user_query}")
+        print(f"[SQL] Full query: {user_query}", flush=True)
 
         # Extract entities from query
         entities = self._extract_entities(user_query)
@@ -227,25 +258,35 @@ class SQLAgent:
                 "sql": """SELECT ten_truong, ten_nganh, ma_khoi, diem_chuan, chi_tieu
 FROM view_tra_cuu_diem
 WHERE ten_khong_dau LIKE '%hoc vien ky thuat quan su%' AND nam = 2024
-ORDER BY ten_nganh, ma_khoi;""",
+ORDER BY ten_nganh, ma_khoi
+LIMIT 50;""",
+            },
+            {
+                "question": "Tôi thi được 26.5 điểm thì có đỗ Học viện Hải quân năm 2025 không?",
+                "sql": """SELECT ten_truong, ten_nganh, ma_khoi, diem_chuan, chi_tieu, nam
+FROM view_tra_cuu_diem
+WHERE ten_khong_dau LIKE '%hoc vien hai quan%' AND nam = 2025
+ORDER BY ten_nganh, ma_khoi
+LIMIT 50;""",
             },
             {
                 "question": "Với 25 điểm khối A, tôi có thể vào trường nào năm 2024?",
                 "sql": """SELECT DISTINCT ten_truong, ten_nganh, ma_khoi, diem_chuan
 FROM view_tra_cuu_diem
-WHERE diem_chuan <= 25 AND ma_khoi = 'A00' AND nam = 2024
+WHERE diem_chuan <= 25 AND nam = 2024
 ORDER BY diem_chuan DESC
 LIMIT 20;""",
             },
             {
-                "question": "So sánh điểm chuẩn các trường quân đội năm 2023 và 2024?",
+                "question": "So sánh điểm chuẩn các trường năm 2023 và 2024?",
                 "sql": """SELECT ten_truong, ten_nganh, ma_khoi,
     MAX(CASE WHEN nam = 2023 THEN diem_chuan END) as diem_2023,
     MAX(CASE WHEN nam = 2024 THEN diem_chuan END) as diem_2024
 FROM view_tra_cuu_diem
-WHERE nam IN (2023, 2024) AND loai_truong = 'quan_doi'
+WHERE nam IN (2023, 2024)
 GROUP BY ten_truong, ten_nganh, ma_khoi
-ORDER BY ten_truong, ten_nganh;""",
+ORDER BY ten_truong, ten_nganh
+LIMIT 50;""",
             },
         ]
 

@@ -1,21 +1,32 @@
-"""Hybrid Reranking module combining Cross-Encoder and Metadata."""
+"""Advanced Hybrid Reranking with Cross-Encoder ensemble and metadata scoring."""
 
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from src.core.config import settings
+from src.agents.components.hierarchy import build_legal_hierarchy_path, find_parent_chunks
 
 logger = logging.getLogger(__name__)
 
+# Section type weights for metadata scoring
+SECTION_TYPE_WEIGHTS = {
+    "diem": 0.9,
+    "dieu": 0.8,
+    "khoan": 0.7,
+    "muc": 0.6,
+    "chuong": 0.3,
+    "unknown": 0.4,
+}
+
 
 class HybridReranker:
-    """Reranker using Cross-Encoder + Retrieval Score + Metadata Score."""
+    """Advanced reranker using Cross-Encoder + Retrieval Score + Metadata Score."""
 
     def __init__(self):
-        """Initialize reranker."""
         self._model = None
         self.weights = settings.reranker_weights
-        self.model_name = settings.reranker_model
+        self.model_name = settings.cross_encoder_model
 
     @property
     def model(self):
@@ -23,114 +34,190 @@ class HybridReranker:
         if self._model is None:
             try:
                 from sentence_transformers import CrossEncoder
-                logger.info(f"Loading Reranker: {self.model_name}")
+                logger.info(f"Loading Cross-Encoder: {self.model_name}")
                 self._model = CrossEncoder(self.model_name, max_length=512)
+                logger.info("Cross-Encoder loaded successfully")
             except Exception as e:
                 logger.warning(f"Failed to load CrossEncoder: {e}")
                 self._model = None
         return self._model
 
-    def calculate_metadata_score(self, doc_metadata: Dict, query: str) -> float:
-        """Calculate score based on document metadata structure.
-        
-        Priority:
-        1. Hierarchy level (Point > Clause > Article > Chapter)
-        2. Title matching
+    def calculate_metadata_score(self, chunk: Dict, query: str) -> float:
+        """Calculate score based on document metadata and structure.
+
+        Uses section_type weighting, title matching, and content length bonus.
+
+        Args:
+            chunk: Chunk dictionary with metadata.
+            query: User query.
+
+        Returns:
+            Metadata score between 0 and 1.
         """
+        metadata = chunk.get("metadata", {})
         score = 0.0
-        
-        # 1. Structure Score
-        # TSBot Chunking provides 'clause', 'article', 'section', 'chapter', 'chunk_index'
-        if 'clause' in doc_metadata:
-            score += 0.4  # Specific clause is good
-        elif 'article' in doc_metadata:
-            score += 0.3  # Article is okay
-        elif 'chapter' in doc_metadata:
-            score += 0.1  # Chapter is too broad
-            
-        # 2. Title Macthing (Simple keyword overlap)
-        # Check title fields like 'article_title', 'chapter_title'
+
+        # 1. Section type score
+        section_type = self._get_section_type(chunk)
+        score += SECTION_TYPE_WEIGHTS.get(section_type, 0.4) * 0.5
+
+        # 2. Title matching with query
         query_lower = query.lower()
+        query_tokens = set(query_lower.split())
+
         titles = [
-            doc_metadata.get('article_title', ''),
-            doc_metadata.get('chapter_title', ''),
-            doc_metadata.get('section_title', '')
+            metadata.get("article_title", ""),
+            metadata.get("chapter_title", ""),
+            metadata.get("section_title", ""),
         ]
-        
+
+        best_overlap = 0.0
         for title in titles:
-            if title and title.lower() in query_lower:
-                score += 0.3
-                break
-                
-        # 3. Recency (Year) - if available
-        if 'year' in doc_metadata:
-             # Favor strict recency if relevant, but military admissions rules are usually current year
-             pass
+            if not title:
+                continue
+            title_tokens = set(title.lower().split())
+            if title_tokens and query_tokens:
+                overlap = len(query_tokens & title_tokens) / max(len(query_tokens), 1)
+                best_overlap = max(best_overlap, overlap)
+
+        score += best_overlap * 0.4
+
+        # 3. Content length bonus (longer content = more informative, up to a point)
+        content = chunk.get("content", "")
+        content_len = len(content)
+        if content_len > 200:
+            score += 0.1
+        elif content_len > 100:
+            score += 0.05
 
         return min(score, 1.0)
+
+    def _get_section_type(self, chunk: Dict) -> str:
+        """Determine section type of a chunk."""
+        metadata = chunk.get("metadata", {})
+        content = chunk.get("content", "").lower()
+
+        if metadata.get("point") or metadata.get("point_number") or re.match(r"^[a-zđ]\)", content):
+            return "diem"
+        if metadata.get("clause") or metadata.get("clause_number"):
+            return "khoan"
+        if metadata.get("article") or metadata.get("article_number"):
+            return "dieu"
+        if metadata.get("section") or metadata.get("section_number"):
+            return "muc"
+        if metadata.get("chapter") or metadata.get("chapter_number"):
+            return "chuong"
+        return "unknown"
+
+    def _build_rich_text(self, chunk: Dict) -> str:
+        """Build rich text for cross-encoder scoring.
+
+        Includes parent context + title + legal path + truncated content.
+
+        Args:
+            chunk: Chunk dictionary.
+
+        Returns:
+            Rich text string for reranking.
+        """
+        parts = []
+
+        # Parent context
+        try:
+            parents = find_parent_chunks(chunk, max_levels=1)
+            for parent in parents:
+                parent_content = parent.get("content", "")
+                if parent_content:
+                    parts.append(parent_content[:150])
+        except Exception:
+            pass
+
+        # Legal path
+        legal_path = build_legal_hierarchy_path(chunk)
+        if legal_path:
+            parts.append(legal_path)
+
+        # Title
+        metadata = chunk.get("metadata", {})
+        title = metadata.get("article_title") or metadata.get("section_title") or metadata.get("chapter_title", "")
+        if title:
+            parts.append(title)
+
+        # Content (truncated)
+        content = chunk.get("content", "")
+        parts.append(content[:600])
+
+        return " | ".join(parts)
 
     def rerank(
         self,
         query: str,
-        documents: List[Any],  # List[RetrievedDocument]
-        top_k: int = 3
-    ) -> List[Any]:
+        chunks: List[Dict],
+        top_k: int = None,
+        use_ensemble: bool = True,
+    ) -> List[Dict]:
         """Perform hybrid reranking.
-        
+
         Args:
-            query: User question.
-            documents: List of RetrievedDocument objects.
-            top_k: Number of docs to return.
-            
+            query: User query.
+            chunks: List of chunk dicts (must have 'content', 'metadata', 'score').
+            top_k: Number of chunks to return.
+            use_ensemble: Use ensemble scoring (CE + retrieval + metadata).
+
         Returns:
-            Reranked list of documents.
+            Reranked list of chunks with '_rerank_score' field.
         """
-        if not documents:
-             return []
-             
-        if not self.model:
-            logger.warning("Reranker model not loaded, returning original order")
-            return documents[:top_k]
+        if not chunks:
+            return []
 
-        # 1. Cross-Encoder Scoring
-        pairs = [(query, doc.content) for doc in documents]
-        ce_scores = self.model.predict(pairs)
+        top_k = top_k or settings.reranker_top_k
 
-        # 2. Combine Scores
-        scored_docs = []
-        for i, doc in enumerate(documents):
-            ce_score = float(ce_scores[i])
-            # Sigmoid/Normalize CE score ?
-            # CrossEncoder outputs logits (often between -10 and 10). 
-            # We map -10..10 to 0..1 roughly for combination
-            ce_norm = (ce_score + 10) / 20.0
-            ce_norm = max(0.0, min(1.0, ce_norm))
-            
-            # Retrieval score (from Qdrant) is usually Cosine (0..1)
-            # doc.score is from Qdrant
-            retrieval_score = getattr(doc, 'score', 0.0)
-            
-            # Metadata score
-            meta_score = self.calculate_metadata_score(doc.metadata, query)
-            
-            # Weighted Sum
-            final_score = (
-                self.weights['cross_encoder'] * ce_norm +
-                self.weights['retrieval'] * retrieval_score +
-                self.weights['metadata'] * meta_score
-            )
-            
-            # Store details for debugging/UI
-            doc.rerank_score = final_score
-            doc.metadata['rerank_debug'] = {
-                'ce': round(ce_norm, 3),
-                'retrieval': round(retrieval_score, 3),
-                'meta': round(meta_score, 3),
-                'final': round(final_score, 3)
+        # Try cross-encoder scoring
+        ce_scores = None
+        if settings.use_cross_encoder and self.model is not None:
+            try:
+                pairs = [(query, self._build_rich_text(chunk)) for chunk in chunks]
+                raw_scores = self.model.predict(pairs)
+                # Normalize from [-10, 10] to [0, 1]
+                ce_scores = [(float(s) + 10.0) / 20.0 for s in raw_scores]
+                ce_scores = [max(0.0, min(1.0, s)) for s in ce_scores]
+            except Exception as e:
+                logger.warning(f"Cross-encoder scoring failed: {e}")
+                ce_scores = None
+
+        # Score each chunk
+        scored_chunks = []
+        for i, chunk in enumerate(chunks):
+            retrieval_score = chunk.get("score", 0.0)
+            meta_score = self.calculate_metadata_score(chunk, query)
+
+            if ce_scores is not None and use_ensemble and settings.reranker_ensemble:
+                # Ensemble: CE 55% + Retrieval 35% + Metadata 10%
+                final_score = (
+                    self.weights["cross_encoder"] * ce_scores[i]
+                    + self.weights["retrieval"] * retrieval_score
+                    + self.weights["metadata"] * meta_score
+                )
+            else:
+                # Fallback: Retrieval 70% + Metadata 30%
+                final_score = 0.7 * retrieval_score + 0.3 * meta_score
+
+            chunk["_rerank_score"] = final_score
+            chunk["_rerank_debug"] = {
+                "ce": round(ce_scores[i], 3) if ce_scores else None,
+                "retrieval": round(retrieval_score, 3),
+                "meta": round(meta_score, 3),
+                "final": round(final_score, 3),
             }
-            
-            scored_docs.append(doc)
-            
-        # 3. Sort and slice
-        scored_docs.sort(key=lambda x: x.rerank_score, reverse=True)
-        return scored_docs[:top_k]
+            scored_chunks.append(chunk)
+
+        scored_chunks.sort(key=lambda x: x.get("_rerank_score", 0), reverse=True)
+
+        score_strs = [f"{c.get('_rerank_score', 0):.3f}" for c in scored_chunks[:top_k]]
+        logger.info(
+            f"Reranked {len(chunks)} chunks -> top {top_k}, "
+            f"CE={'yes' if ce_scores else 'no'}, "
+            f"scores=[{', '.join(score_strs)}]"
+        )
+
+        return scored_chunks[:top_k]

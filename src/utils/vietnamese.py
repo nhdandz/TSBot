@@ -251,20 +251,16 @@ class VietnameseTextProcessor:
         if match:
             return match.group(1)
 
-        # Also check for text descriptions
+        # Also check for text descriptions (require "khối" prefix to avoid false matches)
         khoi_mapping = {
             "khối a": "A00",
             "khoi a": "A00",
-            "a": "A00",
             "khối b": "B00",
             "khoi b": "B00",
-            "b": "B00",
             "khối c": "C00",
             "khoi c": "C00",
-            "c": "C00",
             "khối d": "D01",
             "khoi d": "D01",
-            "d": "D01",
         }
 
         text_lower = cls.normalize_text(text)

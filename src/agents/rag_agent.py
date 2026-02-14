@@ -1,9 +1,9 @@
-"""Legal RAG Agent with Advanced RAG capabilities (CRAG + Hybrid Search + Analysis)."""
+"""Legal RAG Agent with Advanced 10-step pipeline (Hybrid Search + RRF + Hierarchy-aware)."""
 
 import logging
-from dataclasses import dataclass
-from enum import Enum
-from typing import Any, Optional, List
+from typing import Any, Dict, List, Optional
+
+import numpy as np
 
 from src.core.config import settings
 from src.core.embeddings import get_embedding_service
@@ -13,453 +13,463 @@ from src.database.qdrant import get_qdrant_db
 logger = logging.getLogger(__name__)
 
 
-class RelevanceGrade(str, Enum):
-    """Document relevance grades."""
+# --- Answer Prompt (ported from backend_v2) ---
 
-    RELEVANT = "relevant"
-    PARTIALLY_RELEVANT = "partially_relevant"
-    NOT_RELEVANT = "not_relevant"
+ANSWER_PROMPT = """Bạn là trợ lý tư vấn tuyển sinh quân sự Việt Nam. Trả lời câu hỏi DỰA TRÊN ngữ cảnh pháp lý bên dưới.
 
-
-@dataclass
-class RetrievedDocument:
-    """A retrieved document with metadata."""
-
-    content: str
-    metadata: dict
-    score: float
-    relevance_grade: Optional[RelevanceGrade] = None
-    rerank_score: Optional[float] = None
-
-
-# Prompts
-GRADER_PROMPT = """Bạn là người đánh giá mức độ liên quan của tài liệu đối với câu hỏi của người dùng.
-
-Câu hỏi: {question}
-
-Tài liệu:
-{document}
-
-Đánh giá tài liệu này có liên quan đến câu hỏi không:
-- "relevant": Tài liệu trực tiếp trả lời hoặc cung cấp thông tin cần thiết
-- "partially_relevant": Tài liệu có liên quan nhưng không trực tiếp trả lời
-- "not_relevant": Tài liệu không liên quan
-
-Trả về JSON: {{"grade": "relevant/partially_relevant/not_relevant", "reason": "lý do ngắn gọn"}}"""
-
-
-REWRITE_PROMPT = """Viết lại câu hỏi sau để tìm kiếm tốt hơn trong cơ sở dữ liệu văn bản pháp quy tuyển sinh quân sự.
-
-Câu hỏi gốc: {question}
-
-Các từ khóa quan trọng cần giữ lại:
-- Tên trường/học viện
-- Tiêu chuẩn (sức khỏe, chính trị, học lực...)
-- Quy trình/thủ tục
-- Điều kiện/yêu cầu
-
-Câu hỏi viết lại (chỉ trả về câu hỏi mới, không giải thích):"""
-
-
-ANSWER_PROMPT = """Bạn là trợ lý tư vấn tuyển sinh quân sự Việt Nam. Dựa trên các văn bản quy định sau đây, hãy trả lời câu hỏi của người dùng.
-
-## Văn bản quy định:
+## Ngữ cảnh pháp lý:
 {context}
 
 ## Câu hỏi:
 {question}
 
-## Hướng dẫn trả lời:
-1. Chỉ sử dụng thông tin từ văn bản được cung cấp
-2. Trích dẫn điều/khoản cụ thể khi có thể (ví dụ: "Theo Điều 5, Khoản 2...")
-3. Nếu không tìm thấy thông tin, nói rõ là không có trong văn bản
-4. Trả lời bằng tiếng Việt, rõ ràng và dễ hiểu
-5. Sử dụng markdown để format:
-   - Dùng **bold** cho các thông tin quan trọng
-   - Dùng heading (###) để phân chia các phần
-   - Dùng bullet points (-) cho danh sách
-   - Mỗi ý riêng biệt nên có một dòng trống phía trên
-6. Cấu trúc câu trả lời:
-   - Bắt đầu với câu trả lời ngắn gọn và trực tiếp
-   - Giải thích chi tiết với trích dẫn văn bản
-   - Liệt kê các điều kiện/yêu cầu dưới dạng bullet points
-   - Kết luận hoặc lưu ý quan trọng (nếu cần)
+## QUY TẮC BẮT BUỘC:
+1. **CHỈ dùng thông tin từ ngữ cảnh** - KHÔNG thêm kiến thức bên ngoài
+2. **Trích dẫn chính xác**: "Theo Điều X, Khoản Y..." hoặc "Căn cứ Chương Z, Mục W..."
+3. **KHÔNG dùng** "tài liệu 1/2/3", "nguồn 1/2/3" - dùng tên Điều/Khoản/Chương cụ thể
+4. **KHÔNG tự suy luận ngược** với nội dung đã trích dẫn. Nếu văn bản ghi rõ "giải nhất, nhì, ba" thì CẢ BA đều đủ điều kiện
+5. **Phân biệt rõ** các khái niệm khác nhau: "tuyển thẳng" khác "ưu tiên xét tuyển" khác "cộng điểm"
+6. Nếu không tìm thấy thông tin → nói rõ không có trong văn bản
 
-## Ví dụ format tốt:
+## Hướng dẫn format:
+- Trả lời bằng tiếng Việt, rõ ràng
+- Dùng **bold** cho thông tin quan trọng
+- Dùng heading (###) phân chia phần
+- Dùng bullet points (-) cho danh sách
+- Cấu trúc: Trả lời trực tiếp → Trích dẫn chi tiết → Điều kiện/Yêu cầu → Lưu ý
 
-### Câu trả lời
-
-**Có**, bạn có thể thi vào quân đội nếu đáp ứng các điều kiện sau.
-
-### Điều kiện xét tuyển
-
-Theo **Điều 5, Khoản 2** của quy chế tuyển sinh, thí sinh cần:
-
-- **Học lực**: Lớp 10 đạt học lực khá trở lên, các năm còn lại đạt giỏi hoặc tốt
-- **Hạnh kiểm**: Tốt ở tất cả các năm học phổ thông
-- **Sức khỏe**: Đạt tiêu chuẩn sức khỏe theo quy định của Bộ Quốc phòng
-- **Chính trị**: Có phẩm chất đạo đức tốt, là đảng viên hoặc đoàn viên
-
-### Lưu ý quan trọng
-
-Điểm chuẩn có thể khác nhau giữa các trường và ngành. Bạn nên tham khảo thông tin cụ thể của từng học viện quân sự.
+{intent_instruction}
 
 ## Trả lời:"""
 
+# Intent-specific instructions
+INTENT_INSTRUCTIONS = {
+    "specific": "Ưu tiên trả lời ngắn gọn, chính xác, trích dẫn đúng Điều/Khoản liên quan.",
+    "comparison": "So sánh rõ ràng các điểm giống và khác nhau, sử dụng bảng nếu phù hợp.",
+    "list": "Liệt kê đầy đủ tất cả các mục, sử dụng danh sách có đánh số.",
+    "explanation": "Giải thích chi tiết quy trình/thủ tục, theo thứ tự các bước.",
+    "general": "Trả lời tổng quan, bao quát các khía cạnh liên quan.",
+}
+
+# LLM Reranking prompt
+LLM_RERANK_PROMPT = """Đánh giá mức độ liên quan của đoạn văn bản sau với câu hỏi.
+
+Câu hỏi: {query}
+
+Đoạn văn bản:
+{content}
+
+Cho điểm từ 0 đến 10, trong đó:
+- 0-3: Không liên quan
+- 4-6: Liên quan một phần
+- 7-10: Rất liên quan
+
+Trả về JSON: {{"score": <số>, "reason": "<lý do ngắn>"}}"""
+
 
 class RAGAgent:
-    """Legal RAG Agent implementing Advanced RAG pattern."""
+    """Legal RAG Agent implementing Advanced 10-step pipeline."""
 
-    def __init__(
-        self,
-        top_k: int = 5,
-        relevance_threshold: float = 0.7,
-        reranker_top_k: int = 3,
-        enable_reranking: bool = True,
-        enable_query_rewrite: bool = True,
-    ):
-        """Initialize RAG Agent.
-
-        Args:
-            top_k: Number of documents to retrieve.
-            relevance_threshold: Minimum relevance score.
-            reranker_top_k: Number of documents after reranking.
-            enable_reranking: Whether to use reranker.
-            enable_query_rewrite: Whether to rewrite queries.
-        """
-        self.top_k = top_k
-        self.relevance_threshold = relevance_threshold
-        self.reranker_top_k = reranker_top_k
-        self.enable_reranking = enable_reranking
-        self.enable_query_rewrite = enable_query_rewrite
-
+    def __init__(self):
         self.llm_service = get_llm_service()
         self.embedding_service = get_embedding_service()
         self.qdrant = get_qdrant_db()
 
-        # Initialize Advanced Components
+        # Components
+        self.analyzer = None
+        self.expander = None
+        self.cache = None
+        self.reranker = None
+        self.bm25 = None
+
+        self._init_components()
+
+    def _init_components(self):
+        """Initialize all pipeline components."""
+        # Query analysis
         if settings.use_query_analysis:
             from src.agents.components.query_processor import QueryAnalyzer, QueryExpander
             self.analyzer = QueryAnalyzer()
             self.expander = QueryExpander()
-        else:
-            self.analyzer = None
-            self.expander = None
 
+        # Semantic cache
         if settings.use_semantic_cache:
             from src.agents.components.cache import SemanticCache
             self.cache = SemanticCache()
-        else:
-            self.cache = None
 
-        if settings.use_hybrid_search and enable_reranking:
+        # Reranker
+        if settings.use_hybrid_search:
             from src.agents.components.reranker import HybridReranker
-            self.reranker_module = HybridReranker()
+            self.reranker = HybridReranker()
+
+        # BM25
+        if settings.use_hybrid_search:
+            self._init_bm25()
+
+    def _init_bm25(self):
+        """Initialize BM25 index from chunk_map."""
+        from src.agents.components.vector_store import get_store
+        from src.agents.components.bm25 import BM25
+
+        store = get_store()
+        chunks = store.get("chunks", [])
+
+        if chunks:
+            self.bm25 = BM25()
+            documents = [c.get("content", "") for c in chunks]
+            self.bm25.build_index(documents)
+            logger.info(f"BM25 index initialized with {len(documents)} documents")
         else:
-            self.reranker_module = None
+            logger.warning("No chunks loaded, BM25 will be initialized later")
+
+    def _ensure_bm25(self):
+        """Ensure BM25 is initialized (lazy init if chunks loaded after agent creation)."""
+        if self.bm25 is None and settings.use_hybrid_search:
+            self._init_bm25()
 
     async def process_query(
         self,
         query: str,
         context: Optional[dict] = None,
-    ) -> dict[str, Any]:
-        """Process a query using Advanced RAG pattern."""
-        logger.info(f"Processing RAG query: {query}")
-        
-        # 0. Embed Query (Reusable)
-        query_embedding = self.embedding_service.encode_query(query)
+    ) -> Dict[str, Any]:
+        """Process a query using the 10-step Advanced RAG pipeline.
 
-        # 1. Semantic Cache Check
+        Steps:
+        0. Get query embedding
+        1. Semantic Cache check
+        2. Query Intent Analysis -> intent + adaptive settings
+        3. Query Expansion -> variations
+        4. Hybrid Search (Qdrant dense + BM25 sparse + RRF)
+        5. Deduplication (Jaccard)
+        5.5. Sibling Enrichment
+        6. Cross-Encoder Reranking
+        7. Multi-chunk Smart Merging
+        8. Build Context with Adaptive Settings
+        9. Generate Answer
+        10. Update Cache
+        """
+        logger.info(f"[RAG] Processing query: {query}")
+
+        # Step 0: Get query embedding
+        query_embedding = self.embedding_service.encode_query(query)
+        logger.info("[RAG] Step 0: Query embedding generated")
+
+        # Step 1: Semantic Cache check
         if self.cache:
             cached_result = self.cache.lookup(query_embedding)
             if cached_result:
-                return cached_result['response']
+                logger.info("[RAG] Step 1: CACHE HIT")
+                return cached_result["response"]
+        logger.info("[RAG] Step 1: Cache miss")
 
-        # 2. Intent Analysis
+        # Step 2: Intent Analysis
         intent = "general"
         if self.analyzer:
             analysis = self.analyzer.analyze(query)
-            intent = analysis['intent']
-            logger.info(f"Detected intent: {intent} (conf: {analysis['confidence']})")
+            intent = analysis["intent"]
+            logger.info(f"[RAG] Step 2: Intent={intent} (conf={analysis['confidence']:.2f})")
 
-        # 3. Query Expansion
+        # Get adaptive context settings
+        ctx_settings = settings.context_settings.get(intent, settings.context_settings["general"])
+
+        # Step 3: Query Expansion
         search_queries = [query]
         if self.expander:
             search_queries = self.expander.expand(query, intent)
-            logger.debug(f"Expanded queries: {search_queries}")
+            logger.info(f"[RAG] Step 3: Expanded to {len(search_queries)} variations")
 
-        # 4. Smart Retrieval (Parallel)
-        documents = await self._retrieve_multi(search_queries)
-        logger.debug(f"Initial retrieval: {len(documents)} docs")
+        # Step 4: Hybrid Search (Qdrant + BM25 + RRF)
+        self._ensure_bm25()
+        candidates = await self._hybrid_search(search_queries, query_embedding)
+        logger.info(f"[RAG] Step 4: Hybrid search returned {len(candidates)} candidates")
 
-        # 4.5. Smart Context Enrichment (Fetch Siblings)
+        if not candidates:
+            return self._empty_result(query, intent)
+
+        # Step 5: Deduplication
+        from src.agents.components.bm25 import deduplicate_chunks
+        candidates = deduplicate_chunks(candidates)
+        logger.info(f"[RAG] Step 5: After dedup: {len(candidates)} chunks")
+
+        # Step 5.5: Sibling Enrichment
         if settings.use_smart_retrieval:
-            documents = await self._enrich_context(documents)
+            from src.agents.components.hierarchy import enrich_with_all_siblings
+            candidates = enrich_with_all_siblings(candidates, query, query_embedding)
+            logger.info(f"[RAG] Step 5.5: After sibling enrichment: {len(candidates)} chunks")
 
-        # 5. Grade relevance (CRAG)
-        graded_docs = await self._grade_documents(query, documents)
-        
-        relevant_docs = [
-            d for d in graded_docs 
-            if d.relevance_grade in [RelevanceGrade.RELEVANT, RelevanceGrade.PARTIALLY_RELEVANT]
-        ]
-        
-        # 6. Query Rewrite (Fallback if no relevant docs)
-        if not relevant_docs and self.enable_query_rewrite:
-            logger.info("No relevant docs, rewriting query...")
-            rewritten = await self._rewrite_query(query)
-            if rewritten != query:
-                # Retry simplier retrieval
-                documents = await self._retrieve(rewritten)
-                graded_docs = await self._grade_documents(query, documents)
-                relevant_docs = [
-                    d for d in graded_docs 
-                    if d.relevance_grade in [RelevanceGrade.RELEVANT, RelevanceGrade.PARTIALLY_RELEVANT]
-                ]
-
-        # 7. Hybrid Reranking
-        if self.reranker_module and relevant_docs:
-            relevant_docs = self.reranker_module.rerank(
-                query, relevant_docs, top_k=self.reranker_top_k
+        # Step 6: Reranking
+        if self.reranker and len(candidates) > 1:
+            reranked = self.reranker.rerank(
+                query=query,
+                chunks=candidates,
+                top_k=settings.reranker_top_k * 2,
+                use_ensemble=settings.reranker_ensemble,
             )
-        elif self.enable_reranking and relevant_docs and not self.reranker_module:
-            # Fallback to old reranker logic if Hybrid Module failed to load
-            # OR simple sort by retrieval score
-             relevant_docs.sort(key=lambda x: x.score, reverse=True)
-             relevant_docs = relevant_docs[:self.reranker_top_k]
-
-        # 8. Generate Answer
-        if relevant_docs:
-            answer = await self._generate_answer(query, relevant_docs)
-            sources = self._format_sources(relevant_docs)
         else:
-            answer = (
-                "Xin lỗi, tôi không tìm thấy thông tin phù hợp trong văn bản quy định. "
-                "Bạn có thể thử hỏi lại với từ khóa cụ thể hơn."
-            )
-            sources = []
+            # Fallback: LLM reranking or simple score sort
+            reranked = await self._llm_rerank_fallback(query, candidates)
+        logger.info(f"[RAG] Step 6: After reranking: {len(reranked)} chunks")
+
+        # Step 7: Smart Merging
+        from src.agents.components.hierarchy import merge_chunks_smart
+        merged = merge_chunks_smart(reranked, query, query_embedding, ctx_settings)
+        logger.info(f"[RAG] Step 7: After merging: {len(merged)} chunks")
+
+        if not merged:
+            return self._empty_result(query, intent)
+
+        # Step 8: Build Context
+        from src.agents.components.hierarchy import build_multi_chunk_context
+        context_text = build_multi_chunk_context(merged, query, query_embedding, ctx_settings)
+        logger.info(f"[RAG] Step 8: Context built ({len(context_text)} chars)")
+
+        # Step 9: Generate Answer
+        answer = await self._generate_answer(query, context_text, intent)
+        sources = self._format_sources(merged)
+        logger.info(f"[RAG] Step 9: Answer generated ({len(answer)} chars)")
 
         result = {
             "query": query,
             "answer": answer,
             "sources": sources,
             "intent": intent,
-            "documents_retrieved": len(documents),
-            "documents_relevant": len(relevant_docs),
+            "documents_retrieved": len(candidates),
+            "documents_relevant": len(merged),
         }
 
-        # 9. Update Cache
-        if self.cache and relevant_docs and len(answer) > 50:
+        # Step 10: Update Cache
+        if self.cache and merged and len(answer) > 50:
             self.cache.add(query, query_embedding, result)
+            logger.info("[RAG] Step 10: Cache updated")
 
         return result
 
-    async def _retrieve_multi(self, queries: list[str]) -> list[RetrievedDocument]:
-        """Execute retrieval for multiple queries and deduplicate."""
-        all_docs = []
-        seen_content_hashes = set()
-        
-        # Sequential for now to avoid overloading Qdrant/Embedding
+    async def _hybrid_search(
+        self,
+        queries: List[str],
+        query_embedding: np.ndarray,
+    ) -> List[Dict]:
+        """Execute hybrid search: Qdrant dense + BM25 sparse + RRF fusion.
+
+        Args:
+            queries: List of query variations.
+            query_embedding: Embedding of the original query.
+
+        Returns:
+            Fused list of candidate chunks.
+        """
+        from src.agents.components.bm25 import reciprocal_rank_fusion
+        from src.agents.components.vector_store import get_store
+
+        store = get_store()
+        all_chunks = store.get("chunks", [])
+        top_k = settings.rag_top_k
+
+        all_dense_results = []
+        all_bm25_results = []
+
         for q in queries:
-            docs = await self._retrieve(q)
-            for doc in docs:
-                # Deduplicate by content hash
-                # (doc.metadata['id'] is not guaranteed if Qdrant auto-generated UUIDs that differ on upsert)
-                # But typically RAG context is deduplicated by content
-                h = hash(doc.content)
-                if h not in seen_content_hashes:
-                    seen_content_hashes.add(h)
-                    all_docs.append(doc)
-        
-        return all_docs
-
-    async def _enrich_context(self, documents: list[RetrievedDocument]) -> list[RetrievedDocument]:
-        """Fetch siblings/context for top documents."""
-        # Only enrich top 3 to save time
-        candidates = documents[:3]
-        enriched_count = 0
-        seen_content_hashes = {hash(d.content) for d in documents}
-        
-        for doc in candidates:
-            article = doc.metadata.get('article')
-            if not article:
-                continue
-                
-            # Find siblings: Same Article
-            try:
-                # We need to use 'filter' only search, but qdrant client usually expects a vector
-                # We can use the document's own vector to find similar items (which should be siblings) 
-                # constrained by the Article ID
-                
-                # Check if we have the vector? We don't store it in RetrievedDocument.
-                # Re-embed content
-                doc_vector = self.embedding_service.encode_query(doc.content).tolist()
-                
-                siblings = await self.qdrant.search_with_filter(
-                    collection_name=settings.qdrant_legal_collection,
-                    query_vector=doc_vector,
-                    # sibling MUST have same article
-                    must_conditions=[
-                        {"key": "article", "match": {"value": article}}
-                    ],
-                    # If we had document_number, we should restrict to same document too
-                    # But often article numbers are unique enough within a context or we assume top retrieval is correct doc
-                    limit=5 
-                )
-                
-                for sib in siblings:
-                    content = sib['payload'].get('content', '')
-                    h = hash(content)
-                    
-                    if h not in seen_content_hashes:
-                        seen_content_hashes.add(h)
-                        sib_doc = RetrievedDocument(
-                            content=content,
-                            metadata=sib['payload'],
-                            score=sib['score']
-                        )
-                        # Mark as implicit context
-                        sib_doc.metadata['is_sibling'] = True
-                        documents.append(sib_doc)
-                        enriched_count += 1
-                        
-            except Exception as e:
-                logger.warning(f"Failed to enrich context: {e}")
-                
-        if enriched_count > 0:
-            logger.debug(f"Enriched context with {enriched_count} sibling chunks")
-            
-        return documents
-
-    async def _retrieve(self, query: str) -> list[RetrievedDocument]:
-        """Retrieve documents from vector store."""
-        query_embedding = self.embedding_service.encode_query(query)
-
-        results = await self.qdrant.search(
-            collection_name=settings.qdrant_legal_collection,
-            query_vector=query_embedding.tolist(),
-            limit=self.top_k,
-            score_threshold=self.relevance_threshold * 0.5,
-        )
-
-        documents = []
-        for result in results:
-            payload = result.get("payload", {})
-            documents.append(
-                RetrievedDocument(
-                    content=payload.get("content", ""),
-                    metadata=payload,
-                    score=result.get("score", 0),
-                )
+            # Dense search via Qdrant
+            q_embedding = self.embedding_service.encode_query(q)
+            qdrant_results = await self.qdrant.search(
+                collection_name=settings.qdrant_legal_collection,
+                query_vector=q_embedding.tolist(),
+                limit=top_k * 2,
             )
 
-        return documents
+            dense_ranked = []
+            for r in qdrant_results:
+                dense_ranked.append((r["id"], r["score"], r["payload"]))
+            all_dense_results.extend(dense_ranked)
 
-    async def _grade_documents(
+            # BM25 sparse search
+            if self.bm25 and all_chunks:
+                bm25_scores = self.bm25.calculate_bm25_scores(q)
+                bm25_ranked = []
+                for idx, score in enumerate(bm25_scores):
+                    if score > 0:
+                        bm25_ranked.append((idx, score))
+                bm25_ranked.sort(key=lambda x: x[1], reverse=True)
+                all_bm25_results.extend(bm25_ranked[:top_k * 2])
+
+        # RRF Fusion
+        if all_dense_results and all_bm25_results:
+            # Convert to indexed format for RRF
+            # Map Qdrant results to indices in all_chunks by matching chunk_id
+            chunk_id_to_idx = {}
+            for idx, chunk in enumerate(all_chunks):
+                cid = chunk.get("id") or chunk.get("metadata", {}).get("chunk_id")
+                if cid:
+                    chunk_id_to_idx[str(cid)] = idx
+
+            dense_for_rrf = []
+            dense_score_map = {}
+            for doc_id, score, payload in all_dense_results:
+                idx = chunk_id_to_idx.get(str(doc_id))
+                # Try matching by chunk_id in payload
+                if idx is None:
+                    payload_cid = payload.get("chunk_id", "")
+                    idx = chunk_id_to_idx.get(str(payload_cid))
+                if idx is not None:
+                    dense_for_rrf.append((idx, score))
+                    dense_score_map[idx] = max(dense_score_map.get(idx, 0), score)
+
+            bm25_for_rrf = all_bm25_results
+
+            fused = reciprocal_rank_fusion([dense_for_rrf, bm25_for_rrf])
+
+            # Convert back to chunks
+            candidates = []
+            seen = set()
+            for doc_idx, rrf_score in fused[:top_k * 3]:
+                if doc_idx in seen or doc_idx >= len(all_chunks):
+                    continue
+                seen.add(doc_idx)
+                chunk = dict(all_chunks[doc_idx])
+                chunk["score"] = dense_score_map.get(doc_idx, rrf_score)
+                chunk["_rrf_score"] = rrf_score
+                candidates.append(chunk)
+
+            return candidates
+
+        elif all_dense_results:
+            # Dense only
+            candidates = []
+            seen = set()
+            for doc_id, score, payload in all_dense_results:
+                content = payload.get("content", "")
+                content_hash = hash(content)
+                if content_hash in seen:
+                    continue
+                seen.add(content_hash)
+                chunk = {
+                    "id": doc_id,
+                    "content": content,
+                    "metadata": payload,
+                    "score": score,
+                }
+                candidates.append(chunk)
+
+            candidates.sort(key=lambda x: x["score"], reverse=True)
+            return candidates[:top_k * 3]
+
+        return []
+
+    async def _llm_rerank_fallback(
         self,
         query: str,
-        documents: list[RetrievedDocument],
-    ) -> list[RetrievedDocument]:
-        """Grade document relevance using LLM."""
-        graded = []
+        chunks: List[Dict],
+    ) -> List[Dict]:
+        """LLM-based reranking fallback when Cross-Encoder is unavailable.
 
-        for doc in documents:
-            # If explicit sibling, maybe skip grading or assume partially relevant?
-            # For now, grade everything to be safe
+        Args:
+            query: User query.
+            chunks: Candidate chunks.
+
+        Returns:
+            Reranked chunks.
+        """
+        top_k = settings.reranker_top_k
+
+        # Simple: try LLM scoring for top candidates
+        scored = []
+        for chunk in chunks[:top_k * 2]:
+            content = chunk.get("content", "")
             try:
-                prompt = GRADER_PROMPT.format(
-                    question=query,
-                    document=doc.content[:1000],
-                )
-
+                prompt = LLM_RERANK_PROMPT.format(query=query, content=content[:500])
                 response = await self.llm_service.generate_with_json(
                     prompt=prompt,
                     use_grader=True,
                 )
+                llm_score = float(response.get("score", 5)) / 10.0
+                chunk["_rerank_score"] = llm_score * 0.6 + chunk.get("score", 0) * 0.4
+            except Exception:
+                chunk["_rerank_score"] = chunk.get("score", 0)
+            scored.append(chunk)
 
-                grade_str = response.get("grade", "not_relevant")
-                doc.relevance_grade = RelevanceGrade(grade_str)
-
-            except Exception as e:
-                doc.relevance_grade = RelevanceGrade.PARTIALLY_RELEVANT
-
-            graded.append(doc)
-
-        return graded
-
-    async def _rewrite_query(self, query: str) -> str:
-        """Rewrite query for better retrieval."""
-        try:
-            prompt = REWRITE_PROMPT.format(question=query)
-            rewritten = await self.llm_service.generate(
-                prompt=prompt,
-                use_grader=True,
-            )
-            return rewritten.strip()
-        except Exception as e:
-            logger.warning(f"Query rewrite failed: {e}")
-            return query
+        scored.sort(key=lambda x: x.get("_rerank_score", 0), reverse=True)
+        return scored[:top_k]
 
     async def _generate_answer(
         self,
         query: str,
-        documents: list[RetrievedDocument],
+        context: str,
+        intent: str,
     ) -> str:
-        """Generate answer from relevant documents."""
-        context_parts = []
-        for i, doc in enumerate(documents, 1):
-            hierarchy = ""
-            if doc.metadata.get("article"):
-                hierarchy = f"Điều {doc.metadata['article']}"
-                if doc.metadata.get("clause"):
-                    hierarchy += f", Khoản {doc.metadata['clause']}"
-                hierarchy = f"[{hierarchy}] "
+        """Generate answer using LLM with intent-adaptive prompt.
 
-            source = doc.metadata.get("source", "")
-            if source:
-                source = f"(Nguồn: {source})"
+        Args:
+            query: User query.
+            context: Enriched context string.
+            intent: Detected intent.
 
-            context_parts.append(f"{i}. {hierarchy}{doc.content}\n{source}")
-
-        context = "\n\n".join(context_parts)
+        Returns:
+            Generated answer text.
+        """
+        intent_instruction = INTENT_INSTRUCTIONS.get(intent, INTENT_INSTRUCTIONS["general"])
 
         prompt = ANSWER_PROMPT.format(
             context=context,
             question=query,
+            intent_instruction=intent_instruction,
         )
 
+        logger.debug(f"[RAG] Prompt length: {len(prompt)} chars")
         answer = await self.llm_service.generate(prompt=prompt)
         return answer
 
-    def _format_sources(
-        self,
-        documents: list[RetrievedDocument],
-    ) -> list[dict]:
-        """Format source citations."""
+    def _format_sources(self, chunks: List[Dict]) -> List[Dict]:
+        """Format source citations from chunks.
+
+        Args:
+            chunks: List of chunk dictionaries.
+
+        Returns:
+            List of source citation dictionaries.
+        """
         sources = []
-        for doc in documents:
+        for chunk in chunks:
+            metadata = chunk.get("metadata", {})
+            content = chunk.get("content", "")
+
             source = {
-                "content_preview": doc.content[:200] + "..." if len(doc.content) > 200 else doc.content,
-                "score": round(doc.rerank_score or doc.score, 3),
+                "content_preview": content[:200] + "..." if len(content) > 200 else content,
+                "score": round(chunk.get("score", 0), 3),
             }
 
-            if doc.metadata.get("chapter"):
-                source["chapter"] = doc.metadata["chapter"]
-            if doc.metadata.get("article"):
-                source["article"] = doc.metadata["article"]
-            if doc.metadata.get("source"):
-                source["document"] = doc.metadata["source"]
+            from src.agents.components.hierarchy import build_legal_hierarchy_path
+            legal_path = build_legal_hierarchy_path(chunk)
+            if legal_path:
+                source["legal_path"] = legal_path
+
+            if metadata.get("chapter"):
+                source["chapter"] = metadata["chapter"]
+            if metadata.get("article"):
+                source["article"] = metadata["article"]
+            if metadata.get("source"):
+                source["document"] = metadata["source"]
 
             sources.append(source)
 
         return sources
 
+    def _empty_result(self, query: str, intent: str) -> Dict[str, Any]:
+        """Return empty result when no relevant documents found."""
+        logger.warning("[RAG] No relevant documents found")
+        return {
+            "query": query,
+            "answer": (
+                "Xin lỗi, tôi không tìm thấy thông tin phù hợp trong văn bản quy định. "
+                "Bạn có thể thử hỏi lại với từ khóa cụ thể hơn."
+            ),
+            "sources": [],
+            "intent": intent,
+            "documents_retrieved": 0,
+            "documents_relevant": 0,
+        }
+
 
 # Factory function
 def get_rag_agent() -> RAGAgent:
     """Get RAG Agent instance."""
-    return RAGAgent(
-        top_k=settings.rag_top_k,
-        relevance_threshold=settings.rag_relevance_threshold,
-        reranker_top_k=settings.reranker_top_k,
-    )
+    return RAGAgent()

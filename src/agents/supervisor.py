@@ -295,7 +295,7 @@ class SupervisorAgent:
             print("[DEBUG] Calling LLM generate_with_json...")
             response = await self.llm_service.generate_with_json(
                 prompt=prompt,
-                use_grader=True,
+                use_grader=False,
             )
             print(f"[DEBUG] LLM response: {type(response)}, value={response}")
 
@@ -390,14 +390,21 @@ class SupervisorAgent:
         Returns:
             Next node name.
         """
-        # Check if we need RAG for additional context
         sql_result = state.get("sql_result") or {}
 
-        # If SQL failed or returned no results, try RAG
-        if sql_result.get("error") or not sql_result.get("results"):
+        # If SQL has results, we're done
+        if sql_result.get("results"):
+            return "end"
+
+        # SQL returned no results - only fallback to RAG if the intent
+        # was originally ambiguous (routed as "both"). Otherwise, the user
+        # asked a data question and RAG will give irrelevant legal text.
+        intent = state.get("intent", "")
+        if intent in ("both", "rag"):
             return "rag"
 
-        # If we have SQL results, we're done
+        # For pure SQL queries with no results, end with SQL's own message
+        # (e.g. "Không tìm thấy dữ liệu phù hợp")
         return "end"
 
     async def _rag_node(self, state: ConversationState) -> dict:

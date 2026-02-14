@@ -43,14 +43,28 @@ async def lifespan(app: FastAPI):
     db = get_postgres_db()
     qdrant = get_qdrant_db()
 
-    # Check database connections
+    # Check database connections and create tables
     if await db.health_check():
         logger.info("PostgreSQL connection established")
+        await db.create_tables()
     else:
         logger.error("PostgreSQL connection failed")
 
     if await qdrant.health_check():
         logger.info("Qdrant connection established")
+        # Create required collections if they don't exist
+        collections_to_create = [
+            settings.qdrant_legal_collection,
+            settings.qdrant_sql_examples_collection,
+        ]
+        for col_name in collections_to_create:
+            try:
+                await qdrant.create_collection(
+                    collection_name=col_name,
+                    vector_size=settings.embedding_dimension,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create collection '{col_name}'", error=str(e))
     else:
         logger.warning("Qdrant connection failed - vector search will be unavailable")
 
@@ -62,6 +76,13 @@ async def lifespan(app: FastAPI):
         logger.info("Semantic router initialized")
     except Exception as e:
         logger.warning("Semantic router initialization failed", error=str(e))
+
+    # Auto-load chunks from JSON for advanced RAG pipeline
+    from src.agents.components.vector_store import auto_load_chunks
+    try:
+        await auto_load_chunks()
+    except Exception as e:
+        logger.warning("Auto-load chunks failed", error=str(e))
 
     yield
 

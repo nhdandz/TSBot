@@ -1,11 +1,10 @@
-"""Vietnamese embedding service for TSBot."""
+"""Embedding service using Ollama for TSBot."""
 
 import logging
 from typing import Optional
 
+import httpx
 import numpy as np
-import torch
-from sentence_transformers import SentenceTransformer
 
 from src.core.config import settings
 
@@ -13,84 +12,72 @@ logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
-    """Embedding service optimized for Vietnamese text."""
+    """Embedding service using Ollama API."""
 
     def __init__(
         self,
         model_name: Optional[str] = None,
-        fallback_model: Optional[str] = None,
-        device: Optional[str] = None,
+        ollama_base_url: Optional[str] = None,
     ):
         """Initialize embedding service.
 
         Args:
-            model_name: Primary embedding model name.
-            fallback_model: Fallback model if primary fails.
-            device: Device to use (cuda/cpu). Auto-detected if None.
+            model_name: Ollama embedding model name.
+            ollama_base_url: Ollama API base URL.
         """
         self.model_name = model_name or settings.embedding_model
-        self.fallback_model = fallback_model or settings.embedding_fallback_model
-
-        # Auto-detect device
-        if device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        else:
-            self.device = device
-
-        self._model: Optional[SentenceTransformer] = None
+        self.ollama_base_url = ollama_base_url or settings.ollama_base_url
         self._dimension: Optional[int] = None
-
-    @property
-    def model(self) -> SentenceTransformer:
-        """Get or load the embedding model."""
-        if self._model is None:
-            self._model = self._load_model()
-        return self._model
 
     @property
     def dimension(self) -> int:
         """Get embedding dimension."""
         if self._dimension is None:
-            # Generate a test embedding to get dimension
-            test_embedding = self.model.encode("test", convert_to_numpy=True)
-            self._dimension = len(test_embedding)
+            test_embedding = self.encode("test")
+            self._dimension = test_embedding.shape[-1]
         return self._dimension
 
-    def _load_model(self) -> SentenceTransformer:
-        """Load embedding model with fallback support.
+    def _call_ollama_embed(self, texts: list[str]) -> list[list[float]]:
+        """Call Ollama embed API synchronously.
+
+        Args:
+            texts: List of texts to embed.
 
         Returns:
-            Loaded SentenceTransformer model.
+            List of embedding vectors.
         """
-        try:
-            logger.info(f"Loading embedding model: {self.model_name}")
-            model = SentenceTransformer(
-                self.model_name,
-                device=self.device,
-                trust_remote_code=True,
-            )
-            logger.info(f"Model loaded successfully on {self.device}")
-            return model
+        url = f"{self.ollama_base_url}/api/embed"
+        payload = {
+            "model": self.model_name,
+            "input": texts,
+        }
 
-        except Exception as e:
-            logger.warning(f"Failed to load primary model: {e}")
-            logger.info(f"Trying fallback model: {self.fallback_model}")
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(url, json=payload)
+            response.raise_for_status()
+            data = response.json()
+            return data["embeddings"]
 
-            try:
-                # Try fallback model
-                model = SentenceTransformer(
-                    self.fallback_model,
-                    device=self.device,
-                )
-                logger.info("Fallback model loaded successfully")
-                return model
+    async def _async_call_ollama_embed(self, texts: list[str]) -> list[list[float]]:
+        """Call Ollama embed API asynchronously.
 
-            except Exception as e2:
-                logger.error(f"Failed to load fallback model: {e2}")
-                raise RuntimeError(
-                    f"Could not load any embedding model. "
-                    f"Primary: {self.model_name}, Fallback: {self.fallback_model}"
-                )
+        Args:
+            texts: List of texts to embed.
+
+        Returns:
+            List of embedding vectors.
+        """
+        url = f"{self.ollama_base_url}/api/embed"
+        payload = {
+            "model": self.model_name,
+            "input": texts,
+        }
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+            data = response.json()
+            return data["embeddings"]
 
     def encode(
         self,
@@ -105,7 +92,7 @@ class EmbeddingService:
             texts: Single text or list of texts.
             normalize: Normalize embeddings to unit length.
             batch_size: Batch size for encoding.
-            show_progress: Show progress bar.
+            show_progress: Show progress bar (unused, kept for compatibility).
 
         Returns:
             Numpy array of embeddings.
@@ -113,15 +100,20 @@ class EmbeddingService:
         if isinstance(texts, str):
             texts = [texts]
 
-        embeddings = self.model.encode(
-            texts,
-            normalize_embeddings=normalize,
-            batch_size=batch_size,
-            show_progress_bar=show_progress,
-            convert_to_numpy=True,
-        )
+        all_embeddings = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            embeddings = self._call_ollama_embed(batch)
+            all_embeddings.extend(embeddings)
 
-        return embeddings
+        result = np.array(all_embeddings, dtype=np.float32)
+
+        if normalize:
+            norms = np.linalg.norm(result, axis=1, keepdims=True)
+            norms = np.where(norms == 0, 1, norms)
+            result = result / norms
+
+        return result
 
     async def aencode(
         self,
@@ -131,8 +123,6 @@ class EmbeddingService:
     ) -> np.ndarray:
         """Async encode texts to embeddings.
 
-        Note: Uses sync encoding under the hood with thread pool.
-
         Args:
             texts: Single text or list of texts.
             normalize: Normalize embeddings.
@@ -141,18 +131,26 @@ class EmbeddingService:
         Returns:
             Numpy array of embeddings.
         """
-        import asyncio
+        if isinstance(texts, str):
+            texts = [texts]
 
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self.encode(texts, normalize, batch_size),
-        )
+        all_embeddings = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            embeddings = await self._async_call_ollama_embed(batch)
+            all_embeddings.extend(embeddings)
+
+        result = np.array(all_embeddings, dtype=np.float32)
+
+        if normalize:
+            norms = np.linalg.norm(result, axis=1, keepdims=True)
+            norms = np.where(norms == 0, 1, norms)
+            result = result / norms
+
+        return result
 
     def encode_query(self, query: str) -> np.ndarray:
         """Encode a query for retrieval.
-
-        Some models use different prefixes for queries vs documents.
 
         Args:
             query: Query text.
@@ -160,14 +158,6 @@ class EmbeddingService:
         Returns:
             Query embedding.
         """
-        # Check if model supports query prefix (like BGE models)
-        if hasattr(self.model, "_first_module"):
-            module = self.model._first_module()
-            if hasattr(module, "tokenizer"):
-                # BGE models use "query: " prefix
-                if "bge" in self.model_name.lower():
-                    query = f"query: {query}"
-
         return self.encode(query)[0]
 
     def encode_documents(
@@ -181,7 +171,7 @@ class EmbeddingService:
         Args:
             documents: List of document texts.
             batch_size: Batch size.
-            show_progress: Show progress.
+            show_progress: Show progress (unused, kept for compatibility).
 
         Returns:
             Document embeddings.
@@ -189,7 +179,6 @@ class EmbeddingService:
         return self.encode(
             documents,
             batch_size=batch_size,
-            show_progress=show_progress,
         )
 
     def similarity(
@@ -206,13 +195,11 @@ class EmbeddingService:
         Returns:
             Similarity scores.
         """
-        # Ensure 2D arrays
         if query_embedding.ndim == 1:
             query_embedding = query_embedding.reshape(1, -1)
         if document_embeddings.ndim == 1:
             document_embeddings = document_embeddings.reshape(1, -1)
 
-        # Cosine similarity (embeddings are already normalized)
         similarities = np.dot(document_embeddings, query_embedding.T).flatten()
         return similarities
 
@@ -224,9 +211,8 @@ class EmbeddingService:
         """
         return {
             "model_name": self.model_name,
-            "device": self.device,
+            "ollama_base_url": self.ollama_base_url,
             "dimension": self.dimension,
-            "max_seq_length": getattr(self.model, "max_seq_length", "unknown"),
         }
 
     def health_check(self) -> bool:
@@ -237,7 +223,7 @@ class EmbeddingService:
         """
         try:
             test_embedding = self.encode("Kiểm tra embedding tiếng Việt")
-            return len(test_embedding) > 0 and test_embedding.shape[-1] == self.dimension
+            return len(test_embedding) > 0 and test_embedding.shape[-1] > 0
         except Exception as e:
             logger.error(f"Embedding health check failed: {e}")
             return False

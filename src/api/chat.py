@@ -70,7 +70,8 @@ async def chat(
     # Generate session ID if not provided
     session_id = request.session_id or str(uuid.uuid4())
 
-    logger.info(f"Chat request: session={session_id}, message={request.message[:50]}...")
+    logger.info(f"Chat request: session={session_id}")
+    print(f"[CHAT] Full query: {request.message}", flush=True)
 
     try:
         # Save user message to history

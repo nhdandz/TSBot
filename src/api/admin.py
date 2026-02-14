@@ -8,8 +8,8 @@ from typing import Any, Optional
 import pandas as pd
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials, OAuth2PasswordBearer
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +22,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Security
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
+
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 security = HTTPBasic()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/admin/login")
 
@@ -60,19 +65,18 @@ class DiemChuanUpdate(BaseModel):
 
 
 class TruongCreate(BaseModel):
-    ma_truong: str = Field(..., max_length=20)
-    ten_truong: str = Field(..., max_length=255)
-    loai_truong: str = Field(..., pattern="^(quan_doi|cong_an|khac)$")
-    dia_chi: Optional[str] = None
+    school_id: str = Field(..., max_length=20)
+    school_name: str = Field(..., max_length=255)
+    alias: Optional[str] = None
+    location: Optional[str] = None
     website: Optional[str] = None
-    mo_ta: Optional[str] = None
 
 
 class NganhCreate(BaseModel):
     truong_id: int
-    ma_nganh: str = Field(..., max_length=20)
-    ten_nganh: str = Field(..., max_length=255)
-    mo_ta: Optional[str] = None
+    major_code: str = Field(..., max_length=20)
+    major_name: str = Field(..., max_length=255)
+    description: Optional[str] = None
 
 
 class ImportResult(BaseModel):
@@ -141,7 +145,7 @@ async def login(
     )
     user = result.scalar_one_or_none()
 
-    if not user or not pwd_context.verify(credentials.password, user.hashed_password):
+    if not user or not verify_password(credentials.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Sai tên đăng nhập hoặc mật khẩu",
@@ -187,7 +191,13 @@ async def create_truong(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     """Create a new school."""
-    truong = Truong(**data.model_dump())
+    truong = Truong(
+        ma_truong=data.school_id,
+        ten_truong=data.school_name,
+        loai_truong=data.alias or "quan_doi",
+        dia_chi=data.location,
+        website=data.website,
+    )
     session.add(truong)
     await session.commit()
     await session.refresh(truong)
@@ -258,7 +268,12 @@ async def create_nganh(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     """Create a new program."""
-    nganh = Nganh(**data.model_dump())
+    nganh = Nganh(
+        truong_id=data.truong_id,
+        ma_nganh=data.major_code,
+        ten_nganh=data.major_name,
+        mo_ta=data.description,
+    )
     session.add(nganh)
     await session.commit()
     await session.refresh(nganh)
@@ -515,6 +530,38 @@ async def import_diem_chuan(
 
 
 # Document Management Endpoints
+@router.post("/documents/load-json")
+async def load_from_json(
+    json_file_path: str = settings.chunks_json_path,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Load chunks from JSON file into vector store and Qdrant.
+
+    This builds the in-memory chunk_map for hierarchy navigation
+    and upserts embeddings to Qdrant for dense search.
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chỉ admin mới có thể load dữ liệu",
+        )
+
+    try:
+        from src.agents.components.vector_store import async_load_from_json
+        stats = await async_load_from_json(json_file_path)
+        logger.info(f"Loaded chunks from JSON: {stats}")
+        return {
+            "success": True,
+            "message": f"Đã load {stats['total_chunks']} chunks từ {json_file_path}",
+            **stats,
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error loading JSON: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi: {str(e)}")
+
+
 @router.post("/documents/upload")
 async def upload_document(
     file: UploadFile = File(...),
