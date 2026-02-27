@@ -67,7 +67,7 @@ DEFAULT_ROUTES = [
     ),
     Route(
         name="regulation",
-        description="Hỏi về quy định, tiêu chuẩn, điều kiện xét tuyển",
+        description="Hỏi về quy định, tiêu chuẩn, điều kiện, thủ tục tuyển sinh",
         examples=[
             "Tiêu chuẩn sức khỏe để thi vào quân đội",
             "Điều kiện đăng ký xét tuyển",
@@ -79,11 +79,25 @@ DEFAULT_ROUTES = [
             "Có cần khám sức khỏe không",
             "Tiêu chuẩn về mắt như thế nào",
             "Quy định về đối tượng ưu tiên",
+            "Thí sinh đã đăng ký sơ tuyển có phải đăng ký dự thi tốt nghiệp THPT không",
+            "Quy trình sơ tuyển như thế nào",
+            "Thủ tục nhập học ra sao",
+            "Đối tượng nào được ưu tiên xét tuyển",
+            "Khu vực tuyển sinh được quy định thế nào",
+            "Thí sinh nữ có được đăng ký không",
+            "Có cần xác nhận lý lịch không",
+            "Điều kiện về học lực thế nào",
+            "Quy định về cộng điểm ưu tiên",
+            "Khám sức khỏe sơ tuyển gồm những gì",
+            "Các trường quân đội sử dụng tổ hợp xét tuyển nào",
+            "Tổ hợp môn thi vào trường quân đội",
+            "Xét tuyển theo khối nào",
+            "Nguyên tắc tuyển sinh quân sự",
         ],
     ),
     Route(
         name="faq",
-        description="Câu hỏi thường gặp về tuyển sinh quân sự",
+        description="Câu hỏi thường gặp về đời sống, chế độ, chính sách trong quân đội",
         examples=[
             "Học quân đội có được miễn học phí không",
             "Ra trường được phân công ở đâu",
@@ -123,6 +137,22 @@ DEFAULT_ROUTES = [
             "Nên chọn trường nào",
             "So sánh điểm các trường",
             "Trường nào khó vào nhất",
+        ],
+    ),
+    Route(
+        name="school_info",
+        description="Giới thiệu, thông tin tổng quan về trường",
+        examples=[
+            "Giới thiệu về Học viện Kỹ thuật Quân sự",
+            "Học viện Hải quân có những ngành gì",
+            "Thông tin về Trường Sĩ quan Lục quân",
+            "Cho tôi biết về Học viện Quân y",
+            "Trường Sĩ quan Chính trị đào tạo gì",
+            "Học viện Biên phòng ở đâu",
+            "Mô tả về Học viện Phòng không Không quân",
+            "Trường Sĩ quan Công binh là trường gì",
+            "Giới thiệu trường quân đội",
+            "Học viện Hậu cần có gì đặc biệt",
         ],
     ),
 ]
@@ -191,11 +221,23 @@ class SemanticRouter:
                 vector_size=self.embedding_service.dimension,
             )
 
-            # Check if already indexed
+            # Count expected examples
+            expected_count = sum(len(route.examples) for route in self.routes)
+
+            # Check if already indexed with correct count
             count = await self.qdrant.count_points(settings.qdrant_intents_collection)
-            if count > 0:
+            if count == expected_count:
                 logger.info("Routes already indexed in Qdrant")
                 return
+
+            # Re-index if count mismatch (routes changed)
+            if count > 0:
+                logger.info(f"Route count mismatch (cached={count}, expected={expected_count}), re-indexing...")
+                await self.qdrant.delete_collection(settings.qdrant_intents_collection)
+                await self.qdrant.create_collection(
+                    collection_name=settings.qdrant_intents_collection,
+                    vector_size=self.embedding_service.dimension,
+                )
 
             # Index all examples
             vectors = []

@@ -7,6 +7,7 @@ export interface Truong {
   alias?: string
   location?: string
   website?: string
+  description?: string
   created_at?: string
 }
 

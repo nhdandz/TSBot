@@ -10,9 +10,15 @@ export interface ChatMessage {
 }
 
 export interface Source {
-  title: string
-  content: string
+  content_preview?: string
   score?: number
+  legal_path?: string
+  chapter?: string
+  article?: string
+  document?: string
+  // fallback fields
+  title?: string
+  content?: string
   metadata?: Record<string, any>
 }
 
@@ -47,6 +53,16 @@ export interface ChatHistoryItem {
   role: 'user' | 'assistant'
   content: string
   timestamp: string
+  sources?: Source[]
+  intent?: string
+}
+
+export interface ChatSession {
+  session_id: string
+  title: string
+  message_count: number
+  created_at: string
+  updated_at: string
 }
 
 // WebSocket message types

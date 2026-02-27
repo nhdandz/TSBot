@@ -1,6 +1,11 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from '@/components/ui/toaster'
 import ChatPage from '@/pages/ChatPage'
+import LandingPage from '@/pages/LandingPage'
+import AboutPage from '@/pages/AboutPage'
+import FAQPage from '@/pages/FAQPage'
+import ContactPage from '@/pages/ContactPage'
+import PublicLayout from '@/components/layout/PublicLayout'
 import LoginPage from '@/pages/admin/LoginPage'
 import DashboardPage from '@/pages/admin/DashboardPage'
 import TruongPage from '@/pages/admin/TruongPage'
@@ -24,8 +29,16 @@ function App() {
   return (
     <>
       <Routes>
-        {/* Public chat interface */}
-        <Route path="/" element={<ChatPage />} />
+        {/* Public pages with Navbar + Footer */}
+        <Route element={<PublicLayout />}>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/gioi-thieu" element={<AboutPage />} />
+          <Route path="/cau-hoi-thuong-gap" element={<FAQPage />} />
+          <Route path="/lien-he" element={<ContactPage />} />
+        </Route>
+
+        {/* Chat - standalone, no PublicLayout */}
+        <Route path="/chat" element={<ChatPage />} />
 
         {/* Admin routes */}
         <Route path="/admin/login" element={<LoginPage />} />
@@ -51,4 +64,3 @@ function App() {
 }
 
 export default App
-

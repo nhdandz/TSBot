@@ -1,5 +1,7 @@
 """Chat API endpoints."""
 
+import ast
+import json
 import logging
 import uuid
 from datetime import datetime
@@ -95,10 +97,10 @@ async def chat(
             session_id=session_id,
             role="assistant",
             content=result.get("response", ""),
-            metadata=str({
+            chat_metadata=json.dumps({
                 "intent": result.get("intent"),
                 "sources": result.get("sources"),
-            }),
+            }, ensure_ascii=False),
         )
         session.add(assistant_history)
         await session.commit()
@@ -154,6 +156,80 @@ async def submit_feedback(
         raise HTTPException(status_code=500, detail="Lỗi khi gửi phản hồi")
 
 
+@router.get("/sessions")
+async def get_chat_sessions(
+    limit: int = 50,
+    session: AsyncSession = Depends(get_db_session),
+) -> list[dict]:
+    """Get list of all chat sessions with preview.
+
+    Returns:
+        List of sessions with first user message as title.
+    """
+    from sqlalchemy import select, func
+
+    # Get all distinct session_ids with their first message and last activity
+    subq = (
+        select(
+            ChatHistory.session_id,
+            func.min(ChatHistory.created_at).label("first_at"),
+            func.max(ChatHistory.created_at).label("last_at"),
+            func.count(ChatHistory.id).label("message_count"),
+        )
+        .group_by(ChatHistory.session_id)
+        .order_by(func.max(ChatHistory.created_at).desc())
+        .limit(limit)
+        .subquery()
+    )
+
+    result = await session.execute(
+        select(subq.c.session_id, subq.c.first_at, subq.c.last_at, subq.c.message_count)
+    )
+    sessions = result.all()
+
+    session_list = []
+    for s in sessions:
+        # Get first user message as title
+        first_msg = await session.execute(
+            select(ChatHistory.content)
+            .where(ChatHistory.session_id == s.session_id)
+            .where(ChatHistory.role == "user")
+            .order_by(ChatHistory.created_at.asc())
+            .limit(1)
+        )
+        title = first_msg.scalar() or "Cuộc trò chuyện mới"
+
+        session_list.append({
+            "session_id": s.session_id,
+            "title": title[:100],
+            "message_count": s.message_count,
+            "created_at": s.first_at.isoformat(),
+            "updated_at": s.last_at.isoformat(),
+        })
+
+    return session_list
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_chat_session(
+    session_id: str,
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    """Delete a chat session and all its messages."""
+    from sqlalchemy import delete
+
+    try:
+        await session.execute(
+            delete(ChatHistory).where(ChatHistory.session_id == session_id)
+        )
+        await session.commit()
+        return {"success": True, "message": "Đã xóa cuộc trò chuyện"}
+    except Exception as e:
+        logger.error(f"Delete session error: {e}")
+        await session.rollback()
+        raise HTTPException(status_code=500, detail="Lỗi khi xóa cuộc trò chuyện")
+
+
 @router.get("/history/{session_id}")
 async def get_chat_history(
     session_id: str,
@@ -175,20 +251,39 @@ async def get_chat_history(
     result = await session.execute(
         select(ChatHistory)
         .where(ChatHistory.session_id == session_id)
-        .order_by(ChatHistory.created_at.desc())
+        .order_by(ChatHistory.id.asc())
         .limit(limit)
     )
     messages = result.scalars().all()
 
-    return [
-        {
+    history = []
+    for msg in messages:
+        entry: dict[str, Any] = {
             "id": msg.id,
             "role": msg.role,
             "content": msg.content,
             "timestamp": msg.created_at.isoformat(),
         }
-        for msg in reversed(messages)  # Return in chronological order
-    ]
+
+        # Parse metadata for assistant messages to restore sources
+        if msg.role == "assistant" and msg.chat_metadata:
+            try:
+                meta = json.loads(msg.chat_metadata)
+            except (json.JSONDecodeError, ValueError):
+                try:
+                    meta = ast.literal_eval(msg.chat_metadata)
+                except Exception:
+                    meta = None
+
+            if meta and isinstance(meta, dict):
+                if meta.get("sources"):
+                    entry["sources"] = meta["sources"]
+                if meta.get("intent"):
+                    entry["intent"] = meta["intent"]
+
+        history.append(entry)
+
+    return history
 
 
 # WebSocket for streaming responses

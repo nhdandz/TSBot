@@ -434,6 +434,7 @@ class RAGAgent:
 
             source = {
                 "content_preview": content[:200] + "..." if len(content) > 200 else content,
+                "content": content,
                 "score": round(chunk.get("score", 0), 3),
             }
 

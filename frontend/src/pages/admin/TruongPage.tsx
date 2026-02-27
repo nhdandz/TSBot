@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Textarea } from '@/components/ui/textarea'
 import { Plus, Pencil, Trash2, Loader2 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import type { Truong } from '@/types'
@@ -23,6 +24,7 @@ export default function TruongPage() {
     alias: '',
     location: '',
     website: '',
+    description: '',
   })
 
   const { data: schools, isLoading } = useQuery({
@@ -69,7 +71,7 @@ export default function TruongPage() {
   })
 
   const resetForm = () => {
-    setFormData({ school_id: '', school_name: '', alias: '', location: '', website: '' })
+    setFormData({ school_id: '', school_name: '', alias: '', location: '', website: '', description: '' })
     setEditingSchool(null)
   }
 
@@ -90,6 +92,7 @@ export default function TruongPage() {
       alias: school.alias || '',
       location: school.location || '',
       website: school.website || '',
+      description: school.description || '',
     })
     setIsDialogOpen(true)
   }
@@ -175,6 +178,16 @@ export default function TruongPage() {
                   value={formData.website}
                   onChange={(e) => setFormData({ ...formData, website: e.target.value })}
                   placeholder="VD: https://mta.edu.vn"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="description">Mô tả</Label>
+                <Textarea
+                  id="description"
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  placeholder="Nhập mô tả về trường..."
+                  rows={4}
                 />
               </div>
               <div className="flex gap-2 justify-end">

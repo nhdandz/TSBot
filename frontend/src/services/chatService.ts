@@ -8,6 +8,7 @@ import type {
   FeedbackRequest,
   FeedbackResponse,
   ChatHistoryItem,
+  ChatSession,
 } from '@/types'
 
 export const chatService = {
@@ -23,6 +24,14 @@ export const chatService = {
     return apiClient.get<ChatHistoryItem[]>(
       `${API_ENDPOINTS.history(sessionId)}?limit=${limit}`
     )
+  },
+
+  async getChatSessions(limit = 50): Promise<ChatSession[]> {
+    return apiClient.get<ChatSession[]>(`${API_ENDPOINTS.sessions}?limit=${limit}`)
+  },
+
+  async deleteChatSession(sessionId: string): Promise<{ success: boolean; message: string }> {
+    return apiClient.delete(`${API_ENDPOINTS.deleteSession(sessionId)}`)
   },
 
   async checkHealth(): Promise<{ status: string; services: Record<string, string> }> {

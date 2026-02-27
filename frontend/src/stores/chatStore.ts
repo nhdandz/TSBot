@@ -23,6 +23,7 @@ interface ChatState {
   setError: (error: string | null) => void
   clearMessages: () => void
   resetSession: () => void
+  setSessionId: (sessionId: string) => void
 }
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -51,6 +52,15 @@ export const useChatStore = create<ChatState>((set) => ({
     set({
       messages: [],
       sessionId: generateSessionId(),
+      isLoading: false,
+      isTyping: false,
+      error: null,
+    }),
+
+  setSessionId: (sessionId: string) =>
+    set({
+      messages: [],
+      sessionId,
       isLoading: false,
       isTyping: false,
       error: null,

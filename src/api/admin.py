@@ -70,6 +70,7 @@ class TruongCreate(BaseModel):
     alias: Optional[str] = None
     location: Optional[str] = None
     website: Optional[str] = None
+    description: Optional[str] = None
 
 
 class NganhCreate(BaseModel):
@@ -179,6 +180,7 @@ async def list_truong(
             "alias": t.loai_truong,
             "location": t.dia_chi,
             "website": t.website,
+            "description": t.mo_ta,
         }
         for t in truong_list
     ]
@@ -197,12 +199,61 @@ async def create_truong(
         loai_truong=data.alias or "quan_doi",
         dia_chi=data.location,
         website=data.website,
+        mo_ta=data.description,
     )
     session.add(truong)
     await session.commit()
     await session.refresh(truong)
 
     return {"id": truong.id, "message": "Thêm trường thành công"}
+
+
+@router.put("/truong/{truong_id}")
+async def update_truong(
+    truong_id: str,
+    data: TruongCreate,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Update a school."""
+    result = await session.execute(
+        select(Truong).where(Truong.ma_truong == truong_id)
+    )
+    truong = result.scalar_one_or_none()
+
+    if not truong:
+        raise HTTPException(status_code=404, detail="Không tìm thấy trường")
+
+    truong.ten_truong = data.school_name
+    truong.loai_truong = data.alias or truong.loai_truong
+    truong.dia_chi = data.location
+    truong.website = data.website
+    truong.mo_ta = data.description
+
+    await session.commit()
+
+    return {"message": "Cập nhật trường thành công"}
+
+
+@router.delete("/truong/{truong_id}")
+async def delete_truong(
+    truong_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Delete (deactivate) a school."""
+    result = await session.execute(
+        select(Truong).where(Truong.ma_truong == truong_id)
+    )
+    truong = result.scalar_one_or_none()
+
+    if not truong:
+        raise HTTPException(status_code=404, detail="Không tìm thấy trường")
+
+    truong.active = False
+    await session.commit()
+
+    return {"message": "Xóa trường thành công"}
 
 
 # KhoiThi (Exam blocks) endpoints
