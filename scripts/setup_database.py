@@ -60,12 +60,14 @@ CREATE TRIGGER trg_nganh_ten_khong_dau
 -- =============================================================================
 CREATE OR REPLACE VIEW view_tra_cuu_diem AS
 SELECT
-    dc.id as diem_chuan_id,
+    dc.id AS diem_chuan_id,
     t.ma_truong,
     t.ten_truong,
+    t.ten_khong_dau,
     t.loai_truong,
     n.ma_nganh,
     n.ten_nganh,
+    n.ten_khong_dau AS ten_nganh_khong_dau,
     kt.ma_khoi,
     kt.ten_khoi,
     kt.mon_hoc,

@@ -50,7 +50,7 @@ class DiemChuanCreate(BaseModel):
     diem_chuan: float = Field(..., ge=0, le=30)
     chi_tieu: Optional[int] = Field(None, ge=0)
     gioi_tinh: Optional[str] = Field(None, pattern="^(nam|nu)$")
-    khu_vuc: Optional[str] = None
+    khu_vuc: Optional[str] = Field(None, pattern="^(mien_bac|mien_nam)$")
     doi_tuong: Optional[str] = None
     ghi_chu: Optional[str] = None
 
@@ -59,7 +59,7 @@ class DiemChuanUpdate(BaseModel):
     diem_chuan: Optional[float] = Field(None, ge=0, le=30)
     chi_tieu: Optional[int] = Field(None, ge=0)
     gioi_tinh: Optional[str] = Field(None, pattern="^(nam|nu)$")
-    khu_vuc: Optional[str] = None
+    khu_vuc: Optional[str] = Field(None, pattern="^(mien_bac|mien_nam)$")
     doi_tuong: Optional[str] = None
     ghi_chu: Optional[str] = None
 
@@ -77,6 +77,12 @@ class NganhCreate(BaseModel):
     truong_id: int
     major_code: str = Field(..., max_length=20)
     major_name: str = Field(..., max_length=255)
+    description: Optional[str] = None
+
+
+class NganhUpdate(BaseModel):
+    truong_id: Optional[int] = None
+    major_name: Optional[str] = Field(None, max_length=255)
     description: Optional[str] = None
 
 
@@ -330,6 +336,56 @@ async def create_nganh(
     await session.refresh(nganh)
 
     return {"id": nganh.id, "message": "Thêm ngành thành công"}
+
+
+@router.put("/nganh/{major_code}")
+async def update_nganh(
+    major_code: str,
+    data: NganhUpdate,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Update a program by its major code."""
+    result = await session.execute(
+        select(Nganh).where(Nganh.ma_nganh == major_code)
+    )
+    nganh = result.scalar_one_or_none()
+
+    if not nganh:
+        raise HTTPException(status_code=404, detail="Không tìm thấy ngành")
+
+    update_data = data.model_dump(exclude_unset=True)
+    if "truong_id" in update_data:
+        nganh.truong_id = update_data["truong_id"]
+    if "major_name" in update_data:
+        nganh.ten_nganh = update_data["major_name"]
+    if "description" in update_data:
+        nganh.mo_ta = update_data["description"]
+
+    await session.commit()
+
+    return {"message": "Cập nhật ngành thành công"}
+
+
+@router.delete("/nganh/{major_code}")
+async def delete_nganh(
+    major_code: str,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Deactivate a program by its major code."""
+    result = await session.execute(
+        select(Nganh).where(Nganh.ma_nganh == major_code)
+    )
+    nganh = result.scalar_one_or_none()
+
+    if not nganh:
+        raise HTTPException(status_code=404, detail="Không tìm thấy ngành")
+
+    nganh.active = False
+    await session.commit()
+
+    return {"message": "Xóa ngành thành công"}
 
 
 # Diem Chuan (Admission Score) endpoints

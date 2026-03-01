@@ -40,9 +40,9 @@ SQL_SYSTEM_PROMPT = """Bạn là chuyên gia SQL cho hệ thống tra cứu đi�
 | nam | int | Năm tuyển sinh | 2024 |
 | diem_chuan | float | Điểm chuẩn | 26.5 |
 | chi_tieu | int | Chỉ tiêu tuyển | 50 |
-| gioi_tinh | text | Giới tính | 'Nam', 'Nữ' |
-| khu_vuc | text | Khu vực | 'KV1', 'KV2' |
-| doi_tuong | text | Đối tượng | 'ĐT1' |
+| gioi_tinh | text | Giới tính — GIÁ TRỊ THỰC TẾ: 'nam' hoặc 'nu' (KHÔNG dùng 'Nam'/'Nữ'/'NAM'/'NỮ') | 'nam' |
+| khu_vuc | text | Khu vực — GIÁ TRỊ THỰC TẾ: 'mien_bac' hoặc 'mien_nam' (KHÔNG dùng 'KV1'/'KV2'/'Miền Bắc') | 'mien_bac' |
+| doi_tuong | text | Đối tượng | 'DT1' |
 | ghi_chu | text | Ghi chú | |
 
 ## Quy tắc BẮT BUỘC:
@@ -59,15 +59,27 @@ SQL_SYSTEM_PROMPT = """Bạn là chuyên gia SQL cho hệ thống tra cứu đi�
 8. CHỈ trả về câu SQL, không giải thích
 9. Khi người dùng hỏi "có đỗ trường X không" hoặc "X điểm vào trường Y được không", hãy lấy điểm chuẩn của trường Y để so sánh, KHÔNG lọc theo diem_chuan <= X
 10. **CHỈ lọc theo khối (ma_khoi) khi người dùng NÊU RÕ khối thi**. Nếu hỏi "các ngành" hoặc "điểm chuẩn trường X" mà KHÔNG nói khối cụ thể → KHÔNG thêm WHERE ma_khoi
+11. **LUÔN SELECT đủ các cột**: nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu. KHÔNG được bỏ cột nào trong số này khỏi SELECT
+12. **Giá trị lọc gioi_tinh**: dùng 'nam' cho nam, 'nu' cho nữ — TUYỆT ĐỐI không dùng 'Nam'/'Nữ'/'NAM'/'NỮ'
+13. **Giá trị lọc khu_vuc**: dùng 'mien_bac' hoặc 'mien_nam' — TUYỆT ĐỐI không dùng 'KV1'/'KV2'/'Miền Bắc'
+14. Khi hỏi "qua các năm" hoặc so sánh nhiều năm: KHÔNG thêm WHERE nam = ..., trả về tất cả năm và ORDER BY nam ASC
 
 ## Ví dụ ĐÚNG/SAI:
 
-Câu hỏi: "Điểm chuẩn các ngành của học viện hải quân năm 2025"
-- SAI: SELECT ... WHERE ma_khoi = 'A00' AND ten_khong_dau ILIKE '%hoc vien hai quan%' AND nam = 2025 (tự thêm ma_khoi mà user KHÔNG hỏi)
-- ĐÚNG: SELECT ten_nganh, ma_khoi, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien hai quan%' AND nam = 2025 ORDER BY ten_nganh, ma_khoi LIMIT 50;
+Câu hỏi: "Điểm chuẩn nữ học viện kỹ thuật quân sự qua các năm"
+- SAI: WHERE gioi_tinh = 'Nữ' (sai giá trị)
+- SAI: WHERE gioi_tinh = 'Nu' (sai giá trị)
+- SAI: WHERE gioi_tinh = 'Nam' (sai - đây là nữ)
+- ĐÚNG: SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' AND gioi_tinh = 'nu' ORDER BY nam ASC, ten_nganh, khu_vuc LIMIT 100;
 
-Câu hỏi: "Điểm chuẩn khối A01 học viện hải quân năm 2025"
-- ĐÚNG: SELECT ... WHERE ten_khong_dau ILIKE '%hoc vien hai quan%' AND ma_khoi = 'A01' AND nam = 2025 (user NÊU RÕ khối A01)
+Câu hỏi: "Điểm chuẩn các ngành của học viện hải quân năm 2025"
+- SAI: SELECT ten_nganh, ma_khoi, diem_chuan FROM view_tra_cuu_diem ... (thiếu nam, gioi_tinh, khu_vuc)
+- ĐÚNG: SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien hai quan%' AND nam = 2025 ORDER BY ten_nganh, ma_khoi, khu_vuc LIMIT 100;
+
+Câu hỏi: "Điểm chuẩn miền bắc năm 2024"
+- SAI: WHERE khu_vuc = 'Miền Bắc' (sai giá trị)
+- SAI: WHERE khu_vuc = 'KV1' (sai giá trị)
+- ĐÚNG: WHERE khu_vuc = 'mien_bac' AND nam = 2024
 
 ## Lưu ý về tìm kiếm tên:
 - Người dùng có thể nhập không dấu: "hoc vien ky thuat quan su"
@@ -145,6 +157,8 @@ class SQLAgent:
                 sql = await self._generate_sql(
                     user_query, examples, entities, error_history
                 )
+                # Fix filter values LLM commonly gets wrong (gioi_tinh, khu_vuc)
+                sql = self._fix_filter_values(sql, entities)
                 logger.debug(f"Generated SQL (attempt {attempt + 1}): {sql}")
 
                 # Validate SQL
@@ -209,6 +223,19 @@ class SQLAgent:
         if khoi:
             entities["khoi_thi"] = khoi
 
+        # Extract gender (must be before normalize to preserve diacritics)
+        query_lower = query.lower()
+        if any(w in query_lower for w in ["nữ", "nu gioi", "nữ giới", "con gái", "female"]):
+            entities["gioi_tinh"] = "nu"
+        elif any(w in query_lower for w in ["nam giới", "con trai", "male"]):
+            entities["gioi_tinh"] = "nam"
+
+        # Extract khu_vuc
+        if any(w in query_lower for w in ["miền bắc", "mien bac", "phía bắc"]):
+            entities["khu_vuc"] = "mien_bac"
+        elif any(w in query_lower for w in ["miền nam", "mien nam", "phía nam"]):
+            entities["khu_vuc"] = "mien_nam"
+
         # Normalize query for search
         entities["query_normalized"] = self.text_processor.normalize_text(query)
 
@@ -255,37 +282,34 @@ class SQLAgent:
         return [
             {
                 "question": "Điểm chuẩn Học viện Kỹ thuật Quân sự năm 2024?",
-                "sql": """SELECT ten_truong, ten_nganh, ma_khoi, diem_chuan, chi_tieu
+                "sql": """SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu
 FROM view_tra_cuu_diem
-WHERE ten_khong_dau LIKE '%hoc vien ky thuat quan su%' AND nam = 2024
-ORDER BY ten_nganh, ma_khoi
-LIMIT 50;""",
+WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' AND nam = 2024
+ORDER BY ten_nganh, ma_khoi, khu_vuc
+LIMIT 100;""",
+            },
+            {
+                "question": "Điểm chuẩn nữ Học viện Kỹ thuật Quân sự qua các năm?",
+                "sql": """SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu
+FROM view_tra_cuu_diem
+WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' AND gioi_tinh = 'nu'
+ORDER BY nam ASC, ten_nganh, khu_vuc
+LIMIT 100;""",
             },
             {
                 "question": "Tôi thi được 26.5 điểm thì có đỗ Học viện Hải quân năm 2025 không?",
-                "sql": """SELECT ten_truong, ten_nganh, ma_khoi, diem_chuan, chi_tieu, nam
+                "sql": """SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu
 FROM view_tra_cuu_diem
-WHERE ten_khong_dau LIKE '%hoc vien hai quan%' AND nam = 2025
-ORDER BY ten_nganh, ma_khoi
-LIMIT 50;""",
+WHERE ten_khong_dau ILIKE '%hoc vien hai quan%' AND nam = 2025
+ORDER BY ten_nganh, ma_khoi, khu_vuc
+LIMIT 100;""",
             },
             {
                 "question": "Với 25 điểm khối A, tôi có thể vào trường nào năm 2024?",
-                "sql": """SELECT DISTINCT ten_truong, ten_nganh, ma_khoi, diem_chuan
+                "sql": """SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan
 FROM view_tra_cuu_diem
 WHERE diem_chuan <= 25 AND nam = 2024
 ORDER BY diem_chuan DESC
-LIMIT 20;""",
-            },
-            {
-                "question": "So sánh điểm chuẩn các trường năm 2023 và 2024?",
-                "sql": """SELECT ten_truong, ten_nganh, ma_khoi,
-    MAX(CASE WHEN nam = 2023 THEN diem_chuan END) as diem_2023,
-    MAX(CASE WHEN nam = 2024 THEN diem_chuan END) as diem_2024
-FROM view_tra_cuu_diem
-WHERE nam IN (2023, 2024)
-GROUP BY ten_truong, ten_nganh, ma_khoi
-ORDER BY ten_truong, ten_nganh
 LIMIT 50;""",
             },
         ]
@@ -389,6 +413,35 @@ LIMIT 50;""",
 
         return response.strip()
 
+    def _fix_filter_values(self, sql: str, entities: dict) -> str:
+        """Post-process SQL to correct filter values that LLM commonly gets wrong.
+
+        Fixes gioi_tinh and khu_vuc filter values based on extracted entities,
+        overriding whatever the LLM generated.
+        """
+        import re
+
+        gioi_tinh = entities.get("gioi_tinh")
+        if gioi_tinh:
+            # Replace any variant the LLM might have used
+            sql = re.sub(
+                r"gioi_tinh\s*=\s*'[^']*'",
+                f"gioi_tinh = '{gioi_tinh}'",
+                sql,
+                flags=re.IGNORECASE,
+            )
+
+        khu_vuc = entities.get("khu_vuc")
+        if khu_vuc:
+            sql = re.sub(
+                r"khu_vuc\s*=\s*'[^']*'",
+                f"khu_vuc = '{khu_vuc}'",
+                sql,
+                flags=re.IGNORECASE,
+            )
+
+        return sql
+
     async def _validate_sql(self, sql: str) -> tuple[bool, Optional[str]]:
         """Validate SQL query for safety and correctness.
 
@@ -466,26 +519,113 @@ LIMIT 50;""",
         if not results:
             return "Không tìm thấy dữ liệu phù hợp với yêu cầu của bạn."
 
-        # Format results for LLM
-        results_text = json.dumps(results[:10], ensure_ascii=False, indent=2)
+        # Build markdown table in Python — never rely on LLM for data formatting
+        table = self._build_markdown_table(results)
 
-        prompt = f"""Dựa trên kết quả truy vấn sau, hãy trả lời câu hỏi của người dùng bằng tiếng Việt một cách tự nhiên và dễ hiểu.
+        # Ask LLM only for a short analysis/intro (no raw data listing)
+        score = entities.get("score")
+        score_context = f"\nNgười dùng hỏi với điểm số: {score}" if score else ""
+
+        prompt = f"""Trả lời câu hỏi dưới đây bằng 1-3 câu ngắn gọn bằng tiếng Việt.
+KHÔNG liệt kê lại dữ liệu vì đã có bảng chi tiết bên dưới.
+Chỉ viết nhận xét/phân tích ngắn (ví dụ: tổng kết điểm cao/thấp, so sánh khu vực, kết luận với điểm thi cụ thể...).{score_context}
 
 Câu hỏi: {query}
+Dữ liệu ({len(results)} dòng): {json.dumps(results, ensure_ascii=False)}"""
 
-Kết quả truy vấn:
-{results_text}
-
-Số kết quả tổng: {len(results)}
-
-Hãy trả lời ngắn gọn, đầy đủ thông tin quan trọng. Nếu có nhiều kết quả, hãy tóm tắt theo nhóm."""
-
-        answer = await self.llm_service.generate(
+        intro = await self.llm_service.generate(
             prompt=prompt,
-            system_prompt="Bạn là trợ lý tư vấn tuyển sinh quân sự. Trả lời chính xác dựa trên dữ liệu được cung cấp.",
+            system_prompt="Bạn là trợ lý tư vấn tuyển sinh quân sự. Chỉ viết phần nhận xét, không liệt kê lại bảng dữ liệu.",
         )
 
-        return answer
+        return f"{intro}\n\n{table}"
+
+    def _build_markdown_table(self, results: list[dict]) -> str:
+        """Build a clean markdown table from SQL results.
+
+        Rows sharing the same (năm, ngành, giới tính, khu vực, điểm chuẩn, chỉ tiêu)
+        are merged into one row with combined khối (e.g. "A00, A01").
+        năm is included in the group key so rows from different years are never merged.
+        """
+        GIOI_TINH_MAP = {"nam": "Nam", "nu": "Nữ"}
+        KHU_VUC_MAP = {"mien_bac": "Miền Bắc", "mien_nam": "Miền Nam"}
+
+        def _val(value, val_map=None) -> str:
+            """Normalize and optionally map a cell value."""
+            if value is None:
+                return ""
+            v = str(value).strip()
+            if v == "":
+                return ""
+            if val_map:
+                return val_map.get(v.lower(), v)
+            return v
+
+        # Group key includes `nam` và `ten_truong` so different years/schools are never collapsed
+        from collections import OrderedDict
+        groups: OrderedDict = OrderedDict()
+        for row in results:
+            group_key = (
+                _val(row.get("nam")),
+                _val(row.get("ten_truong")),
+                _val(row.get("ten_nganh")),
+                _val(row.get("gioi_tinh"), GIOI_TINH_MAP),
+                _val(row.get("khu_vuc"), KHU_VUC_MAP),
+                _val(row.get("diem_chuan")),
+                _val(row.get("chi_tieu")),
+                _val(row.get("ghi_chu")),
+            )
+            khoi = _val(row.get("ma_khoi"))
+            if group_key not in groups:
+                groups[group_key] = []
+            if khoi and khoi not in groups[group_key]:
+                groups[group_key].append(khoi)
+
+        merged = []
+        for (nam, ten_truong, ten_nganh, gioi_tinh, khu_vuc, diem_chuan, chi_tieu, ghi_chu), khoi_list in groups.items():
+            merged.append({
+                "nam": nam,
+                "ten_truong": ten_truong,
+                "ten_nganh": ten_nganh,
+                "ma_khoi": ", ".join(sorted(khoi_list)),
+                "gioi_tinh": gioi_tinh,
+                "khu_vuc": khu_vuc,
+                "diem_chuan": diem_chuan,
+                "chi_tieu": chi_tieu,
+                "ghi_chu": ghi_chu,
+            })
+
+        COLUMN_CONFIG = [
+            ("nam", "Năm"),
+            ("ten_truong", "Trường"),
+            ("ten_nganh", "Ngành"),
+            ("ma_khoi", "Khối"),
+            ("gioi_tinh", "Giới tính"),
+            ("khu_vuc", "Khu vực"),
+            ("diem_chuan", "Điểm chuẩn"),
+            ("chi_tieu", "Chỉ tiêu"),
+            ("ghi_chu", "Ghi chú"),
+        ]
+
+        active_cols = [
+            (key, display)
+            for key, display in COLUMN_CONFIG
+            if any(row.get(key) for row in merged)
+        ]
+
+        if not active_cols:
+            return ""
+
+        headers = [display for _, display in active_cols]
+        header_row = "| " + " | ".join(headers) + " |"
+        separator  = "| " + " | ".join("---" for _ in active_cols) + " |"
+
+        data_rows = [
+            "| " + " | ".join(row.get(key, "") for key, _ in active_cols) + " |"
+            for row in merged
+        ]
+
+        return "\n".join([header_row, separator] + data_rows)
 
 
 # Factory function

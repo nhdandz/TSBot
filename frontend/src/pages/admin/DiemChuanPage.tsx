@@ -4,6 +4,7 @@ import { adminService } from '@/services/adminService'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
@@ -14,7 +15,7 @@ import { useToast } from '@/hooks/use-toast'
 interface DiemChuanFormData {
   truong_id: number | null
   nganh_id: number | null
-  khoi_thi_id: number | null
+  khoi_thi_ids: number[]
   nam: number
   diem_chuan: number
   gioi_tinh: string | null
@@ -23,11 +24,17 @@ interface DiemChuanFormData {
   ghi_chu: string
 }
 
+const KHU_VUC_LABEL: Record<string, string> = {
+  mien_bac: 'Miền Bắc',
+  mien_nam: 'Miền Nam',
+}
+
 export default function DiemChuanPage() {
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingScore, setEditingScore] = useState<any>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const [filters, setFilters] = useState<{
     year: number | null
@@ -40,7 +47,7 @@ export default function DiemChuanPage() {
   const [formData, setFormData] = useState<DiemChuanFormData>({
     truong_id: null,
     nganh_id: null,
-    khoi_thi_id: null,
+    khoi_thi_ids: [],
     nam: new Date().getFullYear(),
     diem_chuan: 0,
     gioi_tinh: null,
@@ -52,11 +59,6 @@ export default function DiemChuanPage() {
   const { data: schools } = useQuery({
     queryKey: ['truong'],
     queryFn: adminService.getTruong,
-  })
-
-  const { data: allMajors } = useQuery({
-    queryKey: ['nganh'],
-    queryFn: () => adminService.getNganh(),
   })
 
   const { data: filteredMajors } = useQuery({
@@ -77,12 +79,6 @@ export default function DiemChuanPage() {
 
   const createMutation = useMutation({
     mutationFn: (data: any) => adminService.createDiemChuan(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['diem-chuan'] })
-      toast({ title: 'Thành công', description: 'Đã thêm điểm chuẩn mới' })
-      setIsDialogOpen(false)
-      resetForm()
-    },
     onError: (error: any) => {
       const errorMsg = error?.response?.data?.detail || error?.detail || error?.message || 'Không thể thêm điểm chuẩn'
       toast({ title: 'Lỗi', description: errorMsg, variant: 'destructive' })
@@ -101,7 +97,7 @@ export default function DiemChuanPage() {
     setFormData({
       truong_id: null,
       nganh_id: null,
-      khoi_thi_id: null,
+      khoi_thi_ids: [],
       nam: new Date().getFullYear(),
       diem_chuan: 0,
       gioi_tinh: null,
@@ -112,27 +108,52 @@ export default function DiemChuanPage() {
     setEditingScore(null)
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const toggleKhoiThi = (id: number, checked: boolean) => {
+    setFormData((prev) => ({
+      ...prev,
+      khoi_thi_ids: checked
+        ? [...prev.khoi_thi_ids, id]
+        : prev.khoi_thi_ids.filter((k) => k !== id),
+    }))
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    if (!formData.nganh_id || !formData.khoi_thi_id) {
-      toast({ title: 'Lỗi', description: 'Vui lòng chọn ngành và khối thi', variant: 'destructive' })
+    if (!formData.nganh_id || formData.khoi_thi_ids.length === 0) {
+      toast({ title: 'Lỗi', description: 'Vui lòng chọn ngành và ít nhất 1 khối thi', variant: 'destructive' })
       return
     }
 
-    const apiData: any = {
+    const baseData: any = {
       nganh_id: formData.nganh_id,
-      khoi_thi_id: formData.khoi_thi_id,
       nam: formData.nam,
       diem_chuan: formData.diem_chuan,
     }
+    if (formData.gioi_tinh) baseData.gioi_tinh = formData.gioi_tinh
+    if (formData.khu_vuc) baseData.khu_vuc = formData.khu_vuc
+    if (formData.chi_tieu) baseData.chi_tieu = formData.chi_tieu
+    if (formData.ghi_chu) baseData.ghi_chu = formData.ghi_chu
 
-    if (formData.gioi_tinh) apiData.gioi_tinh = formData.gioi_tinh
-    if (formData.khu_vuc) apiData.khu_vuc = formData.khu_vuc
-    if (formData.chi_tieu) apiData.chi_tieu = formData.chi_tieu
-    if (formData.ghi_chu) apiData.ghi_chu = formData.ghi_chu
-
-    createMutation.mutate(apiData)
+    setIsSubmitting(true)
+    try {
+      await Promise.all(
+        formData.khoi_thi_ids.map((khoi_id) =>
+          createMutation.mutateAsync({ ...baseData, khoi_thi_id: khoi_id }),
+        ),
+      )
+      queryClient.invalidateQueries({ queryKey: ['diem-chuan'] })
+      toast({
+        title: 'Thành công',
+        description: `Đã thêm ${formData.khoi_thi_ids.length} điểm chuẩn`,
+      })
+      setIsDialogOpen(false)
+      resetForm()
+    } catch {
+      // lỗi đã được xử lý trong onError của mutation
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -183,31 +204,12 @@ export default function DiemChuanPage() {
                     disabled={!formData.truong_id}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder={formData.truong_id ? "Chọn ngành" : "Chọn trường trước"} />
+                      <SelectValue placeholder={formData.truong_id ? 'Chọn ngành' : 'Chọn trường trước'} />
                     </SelectTrigger>
                     <SelectContent>
                       {filteredMajors?.map((major) => (
                         <SelectItem key={`form-major-${major.id}`} value={major.id?.toString() || ''}>
                           {major.major_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Khối thi *</Label>
-                  <Select
-                    value={formData.khoi_thi_id?.toString() || ''}
-                    onValueChange={(value) => setFormData({ ...formData, khoi_thi_id: parseInt(value) })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Chọn khối" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {khoiThiList?.map((khoi) => (
-                        <SelectItem key={`form-khoi-${khoi.id}`} value={khoi.id.toString()}>
-                          {khoi.ma_khoi} ({khoi.mon_hoc})
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -222,6 +224,18 @@ export default function DiemChuanPage() {
                     onChange={(e) => setFormData({ ...formData, nam: parseInt(e.target.value) })}
                     min="2020"
                     max="2030"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Điểm chuẩn *</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={formData.diem_chuan}
+                    onChange={(e) => setFormData({ ...formData, diem_chuan: parseFloat(e.target.value) || 0 })}
+                    placeholder="VD: 25.5"
                     required
                   />
                 </div>
@@ -254,24 +268,10 @@ export default function DiemChuanPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Không phân biệt</SelectItem>
-                      <SelectItem value="KV1">KV1</SelectItem>
-                      <SelectItem value="KV2">KV2</SelectItem>
-                      <SelectItem value="KV2-NT">KV2-NT</SelectItem>
-                      <SelectItem value="KV3">KV3</SelectItem>
+                      <SelectItem value="mien_bac">Miền Bắc</SelectItem>
+                      <SelectItem value="mien_nam">Miền Nam</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Điểm chuẩn *</Label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={formData.diem_chuan}
-                    onChange={(e) => setFormData({ ...formData, diem_chuan: parseFloat(e.target.value) || 0 })}
-                    placeholder="VD: 25.5"
-                    required
-                  />
                 </div>
 
                 <div className="space-y-2">
@@ -294,10 +294,41 @@ export default function DiemChuanPage() {
                 />
               </div>
 
+              <div className="space-y-2">
+                <Label>Khối thi * <span className="text-muted-foreground font-normal">(chọn nhiều khối có cùng mức điểm)</span></Label>
+                <div className="border rounded-md p-3 max-h-44 overflow-y-auto space-y-2 bg-muted/30">
+                  {khoiThiList && khoiThiList.length > 0 ? (
+                    khoiThiList.map((khoi) => (
+                      <div key={`khoi-${khoi.id}`} className="flex items-center gap-2.5">
+                        <Checkbox
+                          id={`khoi-${khoi.id}`}
+                          checked={formData.khoi_thi_ids.includes(khoi.id)}
+                          onCheckedChange={(checked) => toggleKhoiThi(khoi.id, checked)}
+                        />
+                        <label
+                          htmlFor={`khoi-${khoi.id}`}
+                          className="text-sm cursor-pointer leading-none select-none"
+                        >
+                          <span className="font-mono font-medium">{khoi.ma_khoi}</span>
+                          <span className="text-muted-foreground ml-1">({khoi.mon_hoc})</span>
+                        </label>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Đang tải...</p>
+                  )}
+                </div>
+                {formData.khoi_thi_ids.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Đã chọn {formData.khoi_thi_ids.length} khối → sẽ tạo {formData.khoi_thi_ids.length} bản ghi
+                  </p>
+                )}
+              </div>
+
               <div className="flex gap-2 justify-end">
                 <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>Hủy</Button>
-                <Button type="submit" disabled={createMutation.isPending}>
-                  {createMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
                   Thêm
                 </Button>
               </div>
@@ -316,8 +347,8 @@ export default function DiemChuanPage() {
             <div className="space-y-2">
               <Label>Năm</Label>
               <Select
-                value={filters.year?.toString() || "all"}
-                onValueChange={(value) => setFilters({ ...filters, year: value === "all" ? null : parseInt(value) })}
+                value={filters.year?.toString() || 'all'}
+                onValueChange={(value) => setFilters({ ...filters, year: value === 'all' ? null : parseInt(value) })}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Tất cả các năm" />
@@ -334,14 +365,14 @@ export default function DiemChuanPage() {
             </div>
             <div className="space-y-2">
               <Label>Trường</Label>
-              <Select value={filters.school_id || "all"} onValueChange={(value) => setFilters({ ...filters, school_id: value === "all" ? "" : value })}>
+              <Select value={filters.school_id || 'all'} onValueChange={(value) => setFilters({ ...filters, school_id: value === 'all' ? '' : value })}>
                 <SelectTrigger>
                   <SelectValue placeholder="Tất cả" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Tất cả</SelectItem>
                   {schools?.map((school) => (
-                    <SelectItem key={`filter-${school.id}`} value={school.id?.toString() || ""}>
+                    <SelectItem key={`filter-${school.id}`} value={school.id?.toString() || ''}>
                       {school.school_name}
                     </SelectItem>
                   ))}
@@ -384,7 +415,9 @@ export default function DiemChuanPage() {
                     <TableCell>{score.nganh?.ten_nganh}</TableCell>
                     <TableCell className="font-mono text-xs">{score.khoi_thi?.ma_khoi}</TableCell>
                     <TableCell className="text-muted-foreground">{score.gioi_tinh || '-'}</TableCell>
-                    <TableCell className="text-muted-foreground">{score.khu_vuc || '-'}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {KHU_VUC_LABEL[score.khu_vuc] ?? '-'}
+                    </TableCell>
                     <TableCell className="text-right font-bold text-primary">
                       {score.diem_chuan}
                     </TableCell>
