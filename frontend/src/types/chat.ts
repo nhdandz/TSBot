@@ -1,5 +1,21 @@
 // Chat related types
 
+export interface ChartDataPoint {
+  x: number | string
+  y: number
+}
+
+export interface ChartSeries {
+  name: string
+  data: ChartDataPoint[]
+}
+
+export interface ChartData {
+  type: 'line' | 'bar' | 'scatter'
+  title: string
+  series: ChartSeries[]
+}
+
 export interface ChatMessage {
   id?: number
   role: 'user' | 'assistant' | 'system'
@@ -7,6 +23,7 @@ export interface ChatMessage {
   timestamp: string
   sources?: Source[]
   intent?: string
+  chart_data?: ChartData
 }
 
 export interface Source {
@@ -32,6 +49,7 @@ export interface ChatResponse {
   session_id: string
   intent?: string
   sources: Source[]
+  chart_data?: ChartData
   timestamp: string
 }
 

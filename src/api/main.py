@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.admin import router as admin_router
+from src.api.analytics import router as analytics_router
 from src.api.chat import router as chat_router
 from src.core.config import settings
 from src.database.postgres import get_postgres_db
@@ -156,6 +157,7 @@ async def root():
 # Include routers
 app.include_router(chat_router, prefix="/api/v1", tags=["Chat"])
 app.include_router(admin_router, prefix="/api/v1/admin", tags=["Admin"])
+app.include_router(analytics_router, prefix="/api/v1/analytics", tags=["Analytics"])
 
 
 def run():

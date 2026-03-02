@@ -33,6 +33,7 @@
     "react-hook-form": "^7.53.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^6.26.2",
+    "recharts": "^2.15.4",
     "rehype-raw": "^7.0.0",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",

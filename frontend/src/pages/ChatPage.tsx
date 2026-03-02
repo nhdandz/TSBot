@@ -58,6 +58,7 @@ export default function ChatPage() {
         timestamp: data.timestamp,
         sources: data.sources,
         intent: data.intent,
+        chart_data: data.chart_data,
       }
       addMessage(assistantMessage)
       setIsLoading(false)

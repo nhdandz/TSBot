@@ -3,6 +3,7 @@ import { Bot, Shield } from 'lucide-react'
 import type { ChatMessage } from '@/types'
 import { SourceDisplay } from './SourceDisplay'
 import { MarkdownContent } from './MarkdownContent'
+import { ChartMessage } from './ChartMessage'
 
 interface MessageListProps {
   messages: ChatMessage[]
@@ -81,7 +82,12 @@ export function MessageList({ messages, isTyping, onSuggestionClick }: MessageLi
               {message.role === 'user' ? (
                 <p className="text-sm whitespace-pre-wrap leading-relaxed">{message.content}</p>
               ) : (
-                <MarkdownContent content={message.content} />
+                <>
+                  <MarkdownContent content={message.content} />
+                  {message.chart_data && (
+                    <ChartMessage chartData={message.chart_data} />
+                  )}
+                </>
               )}
             </div>
 

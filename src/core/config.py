@@ -165,10 +165,41 @@ class Settings(BaseSettings):
         return self.app_env.lower() == "production"
 
 
+class EvalSettings(BaseSettings):
+    """Evaluation pipeline settings."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    # Paths
+    eval_dataset_path: str = "data/evaluation/golden_dataset.json"
+    eval_results_dir: str = "data/evaluation/results"
+
+    # Models
+    eval_judge_model: str = "qwen2.5:7b-instruct"
+    eval_embedding_model: str = "bge-m3"
+
+    # Ollama (inherit from main settings)
+    ollama_base_url: str = "http://localhost:11434"
+
+    # Execution
+    eval_batch_size: int = 5
+
+
 @lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings()
+
+
+@lru_cache
+def get_eval_settings() -> EvalSettings:
+    """Get cached evaluation settings instance."""
+    return EvalSettings()
 
 
 # Global settings instance

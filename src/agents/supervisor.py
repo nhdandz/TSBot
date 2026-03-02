@@ -46,6 +46,7 @@ class ConversationState(TypedDict):
     # Output
     response: Optional[str]
     sources: list[dict]
+    chart_data: Optional[dict]
 
     # Control
     needs_clarification: bool
@@ -253,6 +254,21 @@ class SupervisorAgent:
         messages = state.get("messages", [])
         print(f"[DEBUG] Processing query: {query[:50]}...")
 
+        # Pre-check: chart/trend queries always go to SQL agent
+        _chart_kw = [
+            "biểu đồ", "bieu do", "xu hướng", "xu huong",
+            "diễn biến", "dien bien", "theo năm", "theo nam",
+            "so sánh qua các năm", "qua cac nam", "chart", "trend",
+        ]
+        _score_kw = ["điểm chuẩn", "diem chuan", "điểm", "diem", "chỉ tiêu"]
+        _q_lower = query.lower()
+        if (
+            any(kw in _q_lower for kw in _chart_kw)
+            and any(kw in _q_lower for kw in _score_kw)
+        ):
+            print("[DEBUG] Pre-check: chart+score query → forcing SQL agent")
+            return {"intent": "score_lookup", "agent_type": AgentType.SQL}
+
         # Try semantic router first for fast routing
         try:
             print("[DEBUG] Calling semantic router...")
@@ -431,6 +447,7 @@ class SupervisorAgent:
             return {
                 "sql_result": result,
                 "response": result.get("answer"),
+                "chart_data": result.get("chart_data"),
             }
         except Exception as e:
             logger.error(f"SQL Agent error: {e}")
@@ -720,6 +737,7 @@ class SupervisorAgent:
             "rag_result": None,
             "response": None,
             "sources": [],
+            "chart_data": None,
             "needs_clarification": False,
             "error": None,
             "iteration": 0,
@@ -736,6 +754,7 @@ class SupervisorAgent:
                 "response": final_state.get("response", "Xin lỗi, tôi không thể xử lý yêu cầu này."),
                 "intent": final_state.get("intent"),
                 "sources": final_state.get("sources", []),
+                "chart_data": final_state.get("chart_data"),
                 "error": final_state.get("error"),
             }
 

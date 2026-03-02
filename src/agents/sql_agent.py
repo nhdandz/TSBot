@@ -173,6 +173,11 @@ class SQLAgent:
                 # Generate natural language answer
                 answer = await self._generate_answer(user_query, results, entities)
 
+                # Build chart data for trend/comparison queries
+                chart_data = None
+                if entities.get("is_chart_query") and results:
+                    chart_data = self._build_chart_data(user_query, results, entities)
+
                 return {
                     "query": user_query,
                     "sql": sql,
@@ -180,6 +185,7 @@ class SQLAgent:
                     "answer": answer,
                     "entities": entities,
                     "attempts": attempt + 1,
+                    "chart_data": chart_data,
                 }
 
             except Exception as e:
@@ -235,6 +241,14 @@ class SQLAgent:
             entities["khu_vuc"] = "mien_bac"
         elif any(w in query_lower for w in ["miền nam", "mien nam", "phía nam"]):
             entities["khu_vuc"] = "mien_nam"
+
+        # Detect chart / trend query
+        chart_keywords = [
+            "biểu đồ", "bieu do", "xu hướng", "xu huong",
+            "so sánh qua các năm", "qua cac nam", "chart", "trend",
+            "theo năm", "theo nam", "diễn biến", "dien bien",
+        ]
+        entities["is_chart_query"] = any(kw in query_lower for kw in chart_keywords)
 
         # Normalize query for search
         entities["query_normalized"] = self.text_processor.normalize_text(query)
@@ -626,6 +640,82 @@ Dữ liệu ({len(results)} dòng): {json.dumps(results, ensure_ascii=False)}"""
         ]
 
         return "\n".join([header_row, separator] + data_rows)
+
+
+    def _build_chart_data(
+        self,
+        query: str,
+        results: list[dict],
+        entities: dict,
+    ) -> Optional[dict]:
+        """Build structured chart data from SQL results for frontend rendering.
+
+        Returns a dict with keys: type, title, series.
+        Each series item: {name, data: [{x, y}]}.
+        """
+        # Check if data spans multiple years (→ line chart) or single year (→ bar chart)
+        years = sorted({r.get("nam") for r in results if r.get("nam")})
+        multi_year = len(years) > 1
+
+        chart_type = "line" if multi_year else "bar"
+
+        # Build title from query (short version)
+        title = query[:60] + ("..." if len(query) > 60 else "")
+
+        if multi_year:
+            # Group by (khu_vuc, gioi_tinh) → one series per group, x = nam
+            from collections import defaultdict
+
+            series_map: dict = defaultdict(list)
+            for row in results:
+                nam = row.get("nam")
+                diem = row.get("diem_chuan")
+                if nam is None or diem is None:
+                    continue
+                kv = row.get("khu_vuc", "")
+                gt = row.get("gioi_tinh", "")
+                nganh = row.get("ten_nganh", "")
+
+                KV_DISPLAY = {"mien_bac": "Miền Bắc", "mien_nam": "Miền Nam"}
+                GT_DISPLAY = {"nam": "Nam", "nu": "Nữ"}
+                parts = []
+                if nganh:
+                    parts.append(nganh)
+                if gt:
+                    parts.append(GT_DISPLAY.get(gt, gt))
+                if kv:
+                    parts.append(KV_DISPLAY.get(kv, kv))
+                series_name = " - ".join(parts) if parts else "Điểm chuẩn"
+
+                series_map[series_name].append({"x": int(nam), "y": float(diem)})
+
+            # Sort data points within each series by year
+            series = [
+                {"name": name, "data": sorted(pts, key=lambda p: p["x"])}
+                for name, pts in series_map.items()
+            ]
+        else:
+            # Single year: group by ten_nganh → bar chart
+            series_data = []
+            seen = set()
+            for row in results:
+                nganh = row.get("ten_nganh", "Ngành")
+                diem = row.get("diem_chuan")
+                if diem is None or nganh in seen:
+                    continue
+                seen.add(nganh)
+                series_data.append({"x": nganh, "y": float(diem)})
+
+            series = [{"name": "Điểm chuẩn", "data": series_data}]
+
+        if not series or not any(s["data"] for s in series):
+            return None
+
+        return {
+            "type": chart_type,
+            "title": title,
+            "series": series,
+        }
 
 
 # Factory function

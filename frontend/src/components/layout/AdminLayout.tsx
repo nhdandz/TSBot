@@ -5,6 +5,7 @@ import {
   School,
   GraduationCap,
   BarChart3,
+  BarChart2,
   LogOut,
   Shield,
   Menu,
@@ -38,6 +39,11 @@ const navItems = [
     title: 'Văn bản',
     href: '/admin/documents',
     icon: FileText,
+  },
+  {
+    title: 'Phân tích & Dự đoán',
+    href: '/admin/analytics',
+    icon: BarChart2,
   },
 ]
 

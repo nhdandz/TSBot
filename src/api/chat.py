@@ -34,6 +34,7 @@ class ChatResponse(BaseModel):
     session_id: str = Field(..., description="Session ID")
     intent: Optional[str] = Field(None, description="Detected intent")
     sources: list[dict] = Field(default=[], description="Source references")
+    chart_data: Optional[dict] = Field(None, description="Chart data for visualization")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -110,6 +111,7 @@ async def chat(
             session_id=session_id,
             intent=result.get("intent"),
             sources=result.get("sources", []),
+            chart_data=result.get("chart_data"),
         )
 
     except Exception as e:

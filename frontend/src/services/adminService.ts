@@ -209,5 +209,84 @@ export const adminService = {
       }
     )
   },
+
+  // Analytics
+  async getAnalyticsTrend(params: {
+    truong?: string
+    nganh?: string
+    ma_khoi?: string
+    gioi_tinh?: string
+    khu_vuc?: string
+  }): Promise<{
+    data_points: { nam: number; diem_chuan: number }[]
+    prediction: {
+      nam_toi: number
+      diem_du_doan: number
+      confidence: number
+      disclaimer: string | null
+    } | null
+    regression: {
+      slope: number
+      intercept: number
+      r_squared: number
+      n_points: number
+    } | null
+  }> {
+    const q = new URLSearchParams()
+    if (params.truong) q.append('truong', params.truong)
+    if (params.nganh) q.append('nganh', params.nganh)
+    if (params.ma_khoi) q.append('ma_khoi', params.ma_khoi)
+    if (params.gioi_tinh) q.append('gioi_tinh', params.gioi_tinh)
+    if (params.khu_vuc) q.append('khu_vuc', params.khu_vuc)
+    return apiClient.get(`${API_ENDPOINTS.analytics.trend}?${q}`, { headers: withAuth() })
+  },
+
+  async getAnalyticsCompare(params: {
+    nam?: number
+    ma_khoi?: string
+    gioi_tinh?: string
+    khu_vuc?: string
+  }): Promise<
+    {
+      ten_truong: string
+      diem_trung_binh: number
+      diem_cao_nhat: number
+      diem_thap_nhat: number
+      so_nganh: number
+    }[]
+  > {
+    const q = new URLSearchParams()
+    if (params.nam) q.append('nam', String(params.nam))
+    if (params.ma_khoi) q.append('ma_khoi', params.ma_khoi)
+    if (params.gioi_tinh) q.append('gioi_tinh', params.gioi_tinh)
+    if (params.khu_vuc) q.append('khu_vuc', params.khu_vuc)
+    return apiClient.get(`${API_ENDPOINTS.analytics.compare}?${q}`, { headers: withAuth() })
+  },
+
+  async getAnalyticsDistribution(params: {
+    nam?: number
+    ma_khoi?: string
+  }): Promise<{ bins: string[]; counts: number[] }> {
+    const q = new URLSearchParams()
+    if (params.nam) q.append('nam', String(params.nam))
+    if (params.ma_khoi) q.append('ma_khoi', params.ma_khoi)
+    return apiClient.get(`${API_ENDPOINTS.analytics.distribution}?${q}`, { headers: withAuth() })
+  },
+
+  async getAnalyticsSchoolsSummary(): Promise<{
+    schools: {
+      ten_truong: string
+      nam_dau: number
+      nam_cuoi: number
+      so_nam: number
+      diem_tb: number
+      diem_max: number
+      diem_min: number
+    }[]
+    years_available: number[]
+    total_schools: number
+  }> {
+    return apiClient.get(API_ENDPOINTS.analytics.schoolsSummary, { headers: withAuth() })
+  },
 }
 
