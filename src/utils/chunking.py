@@ -52,7 +52,7 @@ class LegalDocumentChunker:
     )
 
     SECTION_PATTERN = re.compile(
-        r"^(?:MỤC|Mục)\s+(\d+)[.:\s]*(.*)$",
+        r"^(?:MỤC|Mục)\s+([IVXLCDM]+|\d+)[.:\s]*(.*)$",
         re.MULTILINE | re.IGNORECASE,
     )
 
@@ -75,6 +75,23 @@ class LegalDocumentChunker:
         self.chunk_overlap = chunk_overlap
         self.respect_structure = respect_structure
         self.include_hierarchy = include_hierarchy
+
+    def _preprocess_legal_text(self, text: str) -> str:
+        """Normalize whitespace và đảm bảo newline trước các điểm chữ (a) b) c)...).
+
+        Chỉ xử lý letter-points. KHÔNG thêm newline trước số (1. 2. 3.) vì
+        _chunk_article() dùng regex split trực tiếp, không cần newline delimiter.
+        Tránh vô tình chèn newline vào "Điều 15.", "Khoản 3.", v.v.
+
+        Args:
+            text: Raw legal text.
+
+        Returns:
+            Preprocessed text với proper line breaks trước letter-points.
+        """
+        text = re.sub(r'[ \t]+', ' ', text)
+        text = re.sub(r'([a-zđ]\)\s)', r'\n\1', text)
+        return text.strip()
 
     def chunk_document(
         self,
@@ -123,6 +140,8 @@ class LegalDocumentChunker:
         }
 
         # Split by articles first (main structural unit)
+        # NOTE: _preprocess_legal_text() is applied per-article inside _chunk_article()
+        # to avoid breaking article-level patterns (e.g. "Điều 15." → "Điều \n15.")
         article_splits = self._split_by_articles(text)
 
         for article_text, article_num, article_title, start_pos in article_splits:
@@ -209,6 +228,23 @@ class LegalDocumentChunker:
 
         return articles
 
+    def _split_clause_by_points(self, clause_text: str) -> list[str]:
+        """Split a clause text by letter-points (a) b) c)...) if it's too large.
+
+        Args:
+            clause_text: Text of a single clause.
+
+        Returns:
+            List of point-level segments. Returns [clause_text] if no points found
+            or if all points fit within chunk_size.
+        """
+        point_pattern = re.compile(r"(?=^[a-zđ]\)\s)", re.MULTILINE)
+        splits = point_pattern.split(clause_text)
+        # Only use point-level splits when the clause is genuinely too large
+        if len(splits) <= 1 or all(len(s) <= self.chunk_size for s in splits):
+            return splits if len(splits) > 1 else [clause_text]
+        return splits
+
     def _chunk_article(
         self,
         article_text: str,
@@ -217,6 +253,13 @@ class LegalDocumentChunker:
         base_pos: int,
     ) -> list[DocumentChunk]:
         """Chunk a single article that's too long.
+
+        Splitting hierarchy:
+        1. Preprocess article text (normalize whitespace, ensure newlines before khoản/điểm)
+        2. Split by numeric clauses (Khoản: 1. 2. 3.)
+        3. If a clause is too large → split by letter points (a) b) c)...)
+           Each letter-point becomes its own chunk to avoid mixing conflicting rules.
+        4. If a point is still too large → split at sentence boundary (. or ;)
 
         Args:
             article_text: Article content.
@@ -229,13 +272,34 @@ class LegalDocumentChunker:
         """
         chunks = []
 
-        # Try to split by clauses (khoản)
+        # Apply preprocess here (not at document level) to avoid breaking
+        # article-level patterns like "Điều 15."
+        article_text = self._preprocess_legal_text(article_text)
+
+        # Level 1: split by numeric clauses (khoản)
         clause_pattern = re.compile(r"(?=^\d+\.\s)", re.MULTILINE)
         clause_splits = clause_pattern.split(article_text)
 
         current_chunk = ""
         current_clause = None
         chunk_start = base_pos
+
+        def _flush_chunk(content: str):
+            """Save accumulated content as a chunk."""
+            if not content.strip():
+                return
+            meta = {
+                **doc_metadata,
+                **{k: v for k, v in hierarchy.items() if v is not None},
+            }
+            if current_clause:
+                meta["clause"] = current_clause
+            chunks.append(DocumentChunk(
+                content=content.strip(),
+                metadata=meta,
+                start_pos=chunk_start,
+                end_pos=chunk_start + len(content),
+            ))
 
         for split in clause_splits:
             if not split.strip():
@@ -246,49 +310,47 @@ class LegalDocumentChunker:
             if clause_match:
                 current_clause = clause_match.group(1)
 
-            # Check if adding this would exceed chunk size
+            # Level 2: if clause is too large, split by letter-points
+            if len(split) > self.chunk_size:
+                point_splits = self._split_clause_by_points(split)
+
+                if len(point_splits) > 1:
+                    # Each letter-point becomes its own chunk (semantic unit)
+                    # First: flush any accumulated content before these points
+                    if current_chunk.strip():
+                        _flush_chunk(current_chunk)
+                        current_chunk = ""
+
+                    for point_text in point_splits:
+                        if not point_text.strip():
+                            continue
+                        # Level 3: if a point is still too large, sentence-boundary split
+                        if len(point_text) > self.chunk_size:
+                            remaining = point_text
+                            while remaining:
+                                break_point = self.chunk_size
+                                for sep in [".\n", ";\n", ".", ";"]:
+                                    pos = remaining.rfind(sep, 0, self.chunk_size)
+                                    if pos > self.chunk_size // 2:
+                                        break_point = pos + len(sep)
+                                        break
+                                _flush_chunk(remaining[:break_point])
+                                remaining = remaining[break_point:]
+                        else:
+                            _flush_chunk(point_text)
+                    continue
+
+            # Normal accumulation for small clauses
             if len(current_chunk) + len(split) > self.chunk_size and current_chunk:
-                # Save current chunk
-                metadata = {
-                    **doc_metadata,
-                    **{k: v for k, v in hierarchy.items() if v is not None},
-                }
-                if current_clause:
-                    metadata["clause"] = current_clause
-
-                chunks.append(
-                    DocumentChunk(
-                        content=current_chunk.strip(),
-                        metadata=metadata,
-                        start_pos=chunk_start,
-                        end_pos=chunk_start + len(current_chunk),
-                    )
-                )
-
-                # Start new chunk with overlap
-                overlap_text = current_chunk[-self.chunk_overlap :] if self.chunk_overlap else ""
+                _flush_chunk(current_chunk)
+                overlap_text = current_chunk[-self.chunk_overlap:] if self.chunk_overlap else ""
                 current_chunk = overlap_text + split
-                chunk_start = chunk_start + len(current_chunk) - len(overlap_text) - len(split)
             else:
                 current_chunk += split
 
         # Don't forget the last chunk
         if current_chunk.strip():
-            metadata = {
-                **doc_metadata,
-                **{k: v for k, v in hierarchy.items() if v is not None},
-            }
-            if current_clause:
-                metadata["clause"] = current_clause
-
-            chunks.append(
-                DocumentChunk(
-                    content=current_chunk.strip(),
-                    metadata=metadata,
-                    start_pos=chunk_start,
-                    end_pos=chunk_start + len(current_chunk),
-                )
-            )
+            _flush_chunk(current_chunk)
 
         return chunks
 

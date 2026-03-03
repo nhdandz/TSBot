@@ -92,20 +92,63 @@ class QueryExpander:
         'chính trị': ['lý lịch'],
         'điểm chuẩn': ['điểm trúng tuyển', 'điểm xét tuyển', 'mức điểm'],
         'ngành': ['chuyên ngành', 'lĩnh vực'],
+        'tiêu chuẩn': ['điều kiện', 'yêu cầu', 'quy định'],
+        'sĩ quan': ['cán bộ', 'quân nhân chuyên nghiệp'],
+        'thể lực': ['sức khỏe thể chất', 'thể chất'],
+        'ưu tiên': ['cộng điểm', 'chính sách ưu tiên'],
+        'quân hàm': ['cấp bậc'],
+        'lý lịch': ['lịch sử cá nhân', 'gia đình'],
+        'hình xăm': ['xăm trổ'],
+        'phong': ['thăng cấp', 'bổ nhiệm'],
+        'đơn vị': ['cơ quan', 'quân đoàn'],
     }
+
+    # Viết tắt tên trường quân sự
+    ABBREVIATIONS = {
+        'HVKTQS': 'Học viện Kỹ thuật Quân sự',
+        'HVQY': 'Học viện Quân y',
+        'HVHQ': 'Học viện Hải quân',
+        'HVPK': 'Học viện Phòng không',
+        'HVANND': 'Học viện An ninh Nhân dân',
+        'HVCSND': 'Học viện Cảnh sát Nhân dân',
+        'QS': 'quân sự',
+        'BQP': 'Bộ Quốc phòng',
+    }
+
+    @staticmethod
+    def _expand_abbreviations(query: str) -> str:
+        """Expand military abbreviations in query.
+
+        Args:
+            query: Original query.
+
+        Returns:
+            Query with abbreviations expanded.
+        """
+        result = query
+        for abbr, full in QueryExpander.ABBREVIATIONS.items():
+            if abbr in result:
+                result = result.replace(abbr, full)
+        return result
 
     @staticmethod
     def expand(query: str, intent: str) -> List[str]:
         """Generate query variations.
-        
+
         Args:
             query: Original query.
             intent: Detected intent.
-            
+
         Returns:
             List of query variations including original.
         """
         variations = [query]
+
+        # 0. Abbreviation expansion (before other processing)
+        expanded_abbr = QueryExpander._expand_abbreviations(query)
+        if expanded_abbr != query and expanded_abbr not in variations:
+            variations.append(expanded_abbr)
+
         query_lower = query.lower()
 
         # 1. Synonym expansion
@@ -137,4 +180,4 @@ class QueryExpander:
         # Deduplicate and limit
         # dict.fromkeys preserves order
         variations = list(dict.fromkeys(variations))
-        return variations[:3]
+        return variations[:4]

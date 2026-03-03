@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Upload, FileText, Trash2, AlertCircle, CheckCircle, Loader2 } from 'lucide-react'
+import { Upload, FileText, Trash2, AlertCircle, CheckCircle, Loader2, RefreshCw, Database } from 'lucide-react'
 import { adminService } from '@/services/adminService'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 interface Document {
@@ -12,15 +12,25 @@ interface Document {
   uploaded_at: string
 }
 
+interface IndexStatus {
+  type: 'success' | 'error' | 'info' | null
+  message: string
+  details?: Array<{ file: string; chunks: number }>
+  totalChunks?: number
+}
+
 export default function DocumentsPage() {
   const [documents, setDocuments] = useState<Document[]>([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
+  const [reindexing, setReindexing] = useState(false)
+  const [loadingJson, setLoadingJson] = useState(false)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [uploadStatus, setUploadStatus] = useState<{
     type: 'success' | 'error' | null
     message: string
   }>({ type: null, message: '' })
+  const [indexStatus, setIndexStatus] = useState<IndexStatus>({ type: null, message: '' })
 
   useEffect(() => {
     loadDocuments()
@@ -80,6 +90,50 @@ export default function DocumentsPage() {
       })
     } finally {
       setUploading(false)
+    }
+  }
+
+  const handleReindex = async () => {
+    if (!confirm('Re-index sẽ xóa và tạo lại toàn bộ vector database từ thư mục tài liệu. Tiếp tục?')) return
+
+    try {
+      setReindexing(true)
+      setIndexStatus({ type: null, message: '' })
+      const res = await adminService.reindexDocuments()
+      setIndexStatus({
+        type: 'success',
+        message: res.message,
+        details: res.files_processed,
+        totalChunks: res.total_chunks,
+      })
+      await loadDocuments()
+    } catch (error: any) {
+      setIndexStatus({
+        type: 'error',
+        message: error.message || 'Lỗi khi re-index',
+      })
+    } finally {
+      setReindexing(false)
+    }
+  }
+
+  const handleLoadJson = async () => {
+    try {
+      setLoadingJson(true)
+      setIndexStatus({ type: null, message: '' })
+      const res = await adminService.loadChunksJson()
+      setIndexStatus({
+        type: 'success',
+        message: res.message,
+        totalChunks: res.total_chunks,
+      })
+    } catch (error: any) {
+      setIndexStatus({
+        type: 'error',
+        message: error.message || 'Lỗi khi load chunks.json',
+      })
+    } finally {
+      setLoadingJson(false)
     }
   }
 
@@ -191,6 +245,99 @@ export default function DocumentsPage() {
 
           <p className="text-xs text-muted-foreground">
             File sẽ được tự động chunking theo cấu trúc (Điều, Khoản...) và index vào vector database
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* Index Management */}
+      <Card>
+        <CardHeader className="pb-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base">Quản lý Index & BM25</CardTitle>
+              <CardDescription className="text-xs mt-1">
+                Re-index dùng DocxChunker — mỗi điểm a)/b)/c) là chunk riêng, tránh lẫn quy định
+              </CardDescription>
+            </div>
+            <Database className="w-5 h-5 text-muted-foreground" />
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-3">
+            {/* Re-index all */}
+            <Button
+              variant="default"
+              size="sm"
+              onClick={handleReindex}
+              disabled={reindexing || loadingJson}
+            >
+              {reindexing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              {reindexing ? 'Đang re-index...' : 'Re-index tất cả'}
+            </Button>
+
+            {/* Load chunks.json vào bộ nhớ */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleLoadJson}
+              disabled={reindexing || loadingJson}
+            >
+              {loadingJson ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Database className="w-4 h-4" />
+              )}
+              {loadingJson ? 'Đang load...' : 'Load JSON vào bộ nhớ'}
+            </Button>
+          </div>
+
+          {/* Index status */}
+          {indexStatus.type && (
+            <div
+              className={`rounded-xl p-3 text-sm space-y-2 ${
+                indexStatus.type === 'success'
+                  ? 'bg-success/10 text-success'
+                  : indexStatus.type === 'error'
+                  ? 'bg-destructive/10 text-destructive'
+                  : 'bg-muted/50 text-foreground'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                {indexStatus.type === 'success' ? (
+                  <CheckCircle className="w-4 h-4 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                )}
+                <span className="font-medium">{indexStatus.message}</span>
+                {indexStatus.totalChunks !== undefined && (
+                  <span className="ml-auto font-mono text-xs bg-background/50 px-2 py-0.5 rounded-md shrink-0">
+                    {indexStatus.totalChunks} chunks
+                  </span>
+                )}
+              </div>
+
+              {/* Per-file breakdown */}
+              {indexStatus.details && indexStatus.details.length > 0 && (
+                <div className="pl-6 space-y-1">
+                  {indexStatus.details.map((item) => (
+                    <div key={item.file} className="flex items-center gap-2 text-xs opacity-80">
+                      <FileText className="w-3 h-3 shrink-0" />
+                      <span className="font-medium truncate">{item.file}</span>
+                      <span className="ml-auto font-mono shrink-0">{item.chunks} chunks</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <p className="text-xs text-muted-foreground">
+            <strong>Re-index tất cả</strong> — đọc từ thư mục tài liệu, xây lại vector database và chunks.json.&nbsp;
+            <strong>Load JSON vào bộ nhớ</strong> — khởi tạo BM25 từ chunks.json đã có (không cần embedding lại).
           </p>
         </CardContent>
       </Card>

@@ -669,6 +669,166 @@ async def load_from_json(
         raise HTTPException(status_code=500, detail=f"Lỗi: {str(e)}")
 
 
+@router.post("/documents/reindex")
+async def reindex_documents(
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Re-index tất cả tài liệu từ documents_dir.
+
+    - .docx → DocxChunker (paragraph-level, mỗi a)/b)/c) là chunk riêng)
+    - .txt / .pdf → LegalDocumentChunker (fallback)
+
+    Sau khi index xong:
+    - Lưu chunks.json để BM25 và hierarchy lookup hoạt động
+    - Reload memory store → BM25 được khởi tạo lại tự động
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chỉ admin mới có thể re-index",
+        )
+
+    import json as _json
+    from pathlib import Path as _Path
+
+    from src.core.embeddings import get_embedding_service
+    from src.database.qdrant import get_qdrant_db
+    from src.utils.chunking import LegalDocumentChunker
+    from src.utils.docx_chunker import DocxChunker
+    from src.agents.components.vector_store import async_load_from_json
+
+    documents_dir = _Path(settings.documents_dir)
+    if not documents_dir.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Thư mục tài liệu không tồn tại: {documents_dir}",
+        )
+
+    supported = {".txt", ".docx", ".pdf"}
+    doc_files = [
+        f for f in documents_dir.iterdir()
+        if f.is_file() and f.suffix.lower() in supported
+    ]
+    if not doc_files:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Không có tài liệu nào trong {documents_dir}",
+        )
+
+    try:
+        embedding_service = get_embedding_service()
+        qdrant = get_qdrant_db()
+        fallback_chunker = LegalDocumentChunker(
+            chunk_size=settings.rag_chunk_size,
+            chunk_overlap=settings.rag_chunk_overlap,
+            respect_structure=True,
+        )
+
+        # Xóa collection cũ và tạo lại (force reindex)
+        try:
+            await qdrant.delete_collection(settings.qdrant_legal_collection)
+        except Exception:
+            pass
+        await qdrant.create_collection(
+            collection_name=settings.qdrant_legal_collection,
+            vector_size=embedding_service.dimension,
+        )
+
+        all_chunk_dicts: list[dict] = []
+        all_docx_chunks: list[dict] = []  # chỉ chunks từ DocxChunker để lưu chunks.json
+        file_stats: list[dict] = []
+
+        for doc_path in doc_files:
+            doc_metadata = {
+                "source": doc_path.name,
+                "file_path": str(doc_path),
+            }
+
+            # .docx: DocxChunker paragraph-level
+            if doc_path.suffix.lower() == ".docx":
+                try:
+                    dc = DocxChunker()
+                    chunk_dicts = dc.parse_docx(str(doc_path), doc_metadata)
+                    all_docx_chunks.extend(chunk_dicts)
+                    logger.info(f"[Reindex] DocxChunker: {doc_path.name} → {len(chunk_dicts)} chunks")
+                except Exception as e:
+                    logger.error(f"[Reindex] DocxChunker failed for {doc_path.name}: {e}")
+                    chunk_dicts = []
+
+            # .txt / .pdf: LegalDocumentChunker fallback
+            else:
+                try:
+                    if doc_path.suffix.lower() == ".txt":
+                        raw_text = doc_path.read_text(encoding="utf-8")
+                    else:
+                        from pypdf import PdfReader
+                        reader = PdfReader(str(doc_path))
+                        raw_text = "\n".join(p.extract_text() or "" for p in reader.pages)
+                except Exception as e:
+                    logger.error(f"[Reindex] Read failed for {doc_path.name}: {e}")
+                    raw_text = ""
+
+                if raw_text.strip():
+                    legacy = fallback_chunker.chunk_document(raw_text, doc_metadata)
+                    chunk_dicts = [
+                        {"id": f"{doc_path.stem}_{i}", "content": c.content, "metadata": c.metadata}
+                        for i, c in enumerate(legacy)
+                    ]
+                else:
+                    chunk_dicts = []
+
+            file_stats.append({"file": doc_path.name, "chunks": len(chunk_dicts)})
+            all_chunk_dicts.extend(chunk_dicts)
+
+        if not all_chunk_dicts:
+            raise HTTPException(status_code=500, detail="Không tạo được chunk nào từ tài liệu")
+
+        # Embed và upsert Qdrant
+        BATCH = 32
+        all_embeddings: list[list[float]] = []
+        texts = [cd["content"] for cd in all_chunk_dicts]
+        for i in range(0, len(texts), BATCH):
+            batch_emb = embedding_service.encode_documents(texts[i:i + BATCH], show_progress=False)
+            all_embeddings.extend(emb.tolist() for emb in batch_emb)
+
+        payloads = [{"content": cd["content"], **cd["metadata"]} for cd in all_chunk_dicts]
+        await qdrant.upsert_vectors(
+            collection_name=settings.qdrant_legal_collection,
+            vectors=all_embeddings,
+            payloads=payloads,
+        )
+
+        # Lưu chunks.json (từ DocxChunker) để BM25 và hierarchy hoạt động
+        if all_docx_chunks:
+            chunks_json = _Path(settings.chunks_json_path)
+            chunks_json.parent.mkdir(parents=True, exist_ok=True)
+            with open(chunks_json, "w", encoding="utf-8") as f:
+                _json.dump(all_docx_chunks, f, ensure_ascii=False, indent=2)
+            logger.info(f"[Reindex] Saved {len(all_docx_chunks)} DocxChunker chunks → {chunks_json}")
+
+            # Reload memory store → BM25 sẽ được khởi tạo lại ở lần query tiếp theo
+            try:
+                await async_load_from_json(str(chunks_json))
+                logger.info("[Reindex] Memory store reloaded successfully")
+            except Exception as e:
+                logger.warning(f"[Reindex] Memory reload warning: {e}")
+
+        logger.info(f"[Reindex] Done: {len(all_chunk_dicts)} total chunks from {len(file_stats)} files")
+        return {
+            "success": True,
+            "total_chunks": len(all_chunk_dicts),
+            "files_processed": file_stats,
+            "chunks_json_saved": bool(all_docx_chunks),
+            "message": f"Đã re-index {len(all_chunk_dicts)} chunks từ {len(file_stats)} tài liệu",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Reindex] Error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi re-index: {str(e)}")
+
+
 @router.post("/documents/upload")
 async def upload_document(
     file: UploadFile = File(...),
@@ -727,69 +887,95 @@ async def upload_document(
             logger.error("File is empty (0 bytes)")
             raise HTTPException(status_code=400, detail="File rỗng")
 
-        # Extract text based on file type
-        logger.info(f"Extracting text from {file_ext} file...")
-        if file_ext == ".txt":
-            text = content_bytes.decode("utf-8")
-        elif file_ext == ".docx":
-            from docx import Document
-            doc = Document(io.BytesIO(content_bytes))
-            text = "\n".join([para.text for para in doc.paragraphs])
-        elif file_ext == ".pdf":
-            from pypdf import PdfReader
-            reader = PdfReader(io.BytesIO(content_bytes))
-            text_parts = [page.extract_text() for page in reader.pages]
-            text = "\n".join(text_parts)
-        else:
-            logger.error(f"Unsupported file extension: {file_ext}")
-            raise HTTPException(status_code=400, detail="Định dạng file không hỗ trợ")
-
-        logger.info(f"Extracted {len(text)} characters of text")
-
-        if not text.strip():
-            logger.error("Extracted text is empty")
-            raise HTTPException(status_code=400, detail="File rỗng hoặc không đọc được")
-        
-        # Import services
+        import json as _json
+        import tempfile as _tempfile
+        from pathlib import Path as _Path
         from src.core.embeddings import get_embedding_service
         from src.database.qdrant import get_qdrant_db
-        from src.utils.chunking import LegalDocumentChunker
-        
+
         embedding_service = get_embedding_service()
         qdrant = get_qdrant_db()
-        
-        # Chunk document
-        chunker = LegalDocumentChunker(
-            chunk_size=settings.rag_chunk_size,
-            chunk_overlap=settings.rag_chunk_overlap,
-            respect_structure=True,
-        )
-        
+
         doc_metadata = {
             "source": file.filename,
             "uploaded_by": current_user.username,
             "uploaded_at": datetime.utcnow().isoformat(),
         }
-        
-        chunks = chunker.chunk_document(text, doc_metadata)
-        logger.info(f"Created {len(chunks)} chunks from {file.filename}")
-        
+
+        chunk_dicts: list[dict] = []
+
+        # .docx → DocxChunker (paragraph-level, mỗi a)/b)/c) là chunk riêng)
+        if file_ext == ".docx":
+            from src.utils.docx_chunker import DocxChunker
+
+            # Cần ghi ra tempfile vì DocxChunker đọc từ đường dẫn
+            with _tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+                tmp.write(content_bytes)
+                tmp_path = tmp.name
+
+            try:
+                dc = DocxChunker()
+                chunk_dicts = dc.parse_docx(tmp_path, doc_metadata)
+                logger.info(f"DocxChunker: {len(chunk_dicts)} chunks từ {file.filename}")
+
+                # Lưu chunks.json → BM25 và hierarchy hoạt động sau upload
+                chunks_json = _Path(settings.chunks_json_path)
+                chunks_json.parent.mkdir(parents=True, exist_ok=True)
+                with open(chunks_json, "w", encoding="utf-8") as f:
+                    _json.dump(chunk_dicts, f, ensure_ascii=False, indent=2)
+
+                # Reload memory store
+                try:
+                    from src.agents.components.vector_store import async_load_from_json
+                    await async_load_from_json(str(chunks_json))
+                    logger.info("Memory store reloaded after upload")
+                except Exception as e:
+                    logger.warning(f"Memory reload warning: {e}")
+            finally:
+                import os as _os
+                _os.unlink(tmp_path)
+
+        # .txt / .pdf → LegalDocumentChunker fallback
+        else:
+            from src.utils.chunking import LegalDocumentChunker
+
+            if file_ext == ".txt":
+                text = content_bytes.decode("utf-8")
+            elif file_ext == ".pdf":
+                from pypdf import PdfReader
+                reader = PdfReader(io.BytesIO(content_bytes))
+                text = "\n".join(p.extract_text() or "" for p in reader.pages)
+            else:
+                raise HTTPException(status_code=400, detail="Định dạng file không hỗ trợ")
+
+            if not text.strip():
+                raise HTTPException(status_code=400, detail="File rỗng hoặc không đọc được")
+
+            chunker = LegalDocumentChunker(
+                chunk_size=settings.rag_chunk_size,
+                chunk_overlap=settings.rag_chunk_overlap,
+                respect_structure=True,
+            )
+            legacy_chunks = chunker.chunk_document(text, doc_metadata)
+            chunk_dicts = [
+                {"id": f"{_Path(file.filename).stem}_{i}", "content": c.content, "metadata": c.metadata}
+                for i, c in enumerate(legacy_chunks)
+            ]
+            logger.info(f"LegalDocumentChunker: {len(chunk_dicts)} chunks từ {file.filename}")
+
+        if not chunk_dicts:
+            raise HTTPException(status_code=400, detail="Không tạo được chunk nào từ file")
+
+        logger.info(f"Created {len(chunk_dicts)} chunks from {file.filename}")
+
         # Embed chunks
-        chunk_texts = [c.content for c in chunks]
-        embeddings = embedding_service.encode_documents(chunk_texts, show_progress=False)
-        
-        # Prepare payloads
-        payloads = []
-        vectors = []
-        for i, chunk in enumerate(chunks):
-            payload = {
-                "content": chunk.content,
-                **chunk.metadata,
-            }
-            payloads.append(payload)
-            vectors.append(embeddings[i].tolist())
-        
-        # Index to Qdrant
+        texts = [cd["content"] for cd in chunk_dicts]
+        embeddings = embedding_service.encode_documents(texts, show_progress=False)
+
+        # Prepare và upsert Qdrant
+        vectors = [emb.tolist() for emb in embeddings]
+        payloads = [{"content": cd["content"], **cd["metadata"]} for cd in chunk_dicts]
+
         await qdrant.upsert_vectors(
             collection_name=settings.qdrant_legal_collection,
             vectors=vectors,
@@ -797,15 +983,15 @@ async def upload_document(
         )
 
         logger.info(
-            f"✅ Successfully indexed {len(chunks)} chunks from {file.filename} by {current_user.username}"
+            f"✅ Successfully indexed {len(chunk_dicts)} chunks from {file.filename} by {current_user.username}"
         )
         logger.info(f"=== UPLOAD DOCUMENT END ===")
 
         return {
             "success": True,
-            "message": f"Đã index {len(chunks)} chunks từ {file.filename}",
+            "message": f"Đã index {len(chunk_dicts)} chunks từ {file.filename}",
             "filename": file.filename,
-            "chunks": len(chunks),
+            "chunks": len(chunk_dicts),
             "collection": settings.qdrant_legal_collection,
         }
 

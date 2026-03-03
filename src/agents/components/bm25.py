@@ -10,6 +10,13 @@ from src.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+LEGAL_COMPOUND_TERMS = {
+    "điểm chuẩn", "học viện", "quân sự", "sức khỏe",
+    "thể lực", "hồ sơ", "ưu tiên", "tuyển sinh",
+    "trúng tuyển", "xét tuyển", "khu vực", "sĩ quan",
+    "thương binh", "liệt sĩ", "quân hàm", "hình xăm",
+}
+
 VIETNAMESE_STOPWORDS = {
     "và", "của", "là", "có", "trong", "cho", "được", "với", "này", "đó",
     "các", "một", "những", "không", "theo", "về", "tại", "từ", "đến",
@@ -40,19 +47,32 @@ class BM25:
         self._built = False
 
     @staticmethod
-    def tokenize(text: str) -> List[str]:
-        """Tokenize Vietnamese text with stopword removal.
+    def tokenize(text: str, use_bigrams: bool = None) -> List[str]:
+        """Tokenize Vietnamese text with stopword removal and optional bigrams.
 
         Args:
             text: Input text.
+            use_bigrams: Add bigram tokens for compound legal terms. Defaults to settings.
 
         Returns:
             List of tokens.
         """
-        text = text.lower()
-        text = re.sub(r"[^\w\sàáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]", " ", text)
-        tokens = text.split()
-        return [t for t in tokens if t not in VIETNAMESE_STOPWORDS and len(t) > 1]
+        if use_bigrams is None:
+            use_bigrams = settings.bm25_use_bigrams
+
+        text_lower = text.lower()
+        text_clean = re.sub(r"[^\w\sàáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]", " ", text_lower)
+        tokens = text_clean.split()
+        tokens = [t for t in tokens if t not in VIETNAMESE_STOPWORDS and len(t) > 1]
+
+        if use_bigrams:
+            bigram_tokens = []
+            for compound in LEGAL_COMPOUND_TERMS:
+                if compound in text_lower:
+                    bigram_tokens.append(compound.replace(" ", "_"))
+            tokens = tokens + bigram_tokens
+
+        return tokens
 
     def build_index(self, documents: List[str]):
         """Build BM25 index from document texts.
@@ -118,24 +138,29 @@ class BM25:
 def reciprocal_rank_fusion(
     ranked_lists: List[List[Tuple[int, float]]],
     k: int = None,
+    weights: List[float] = None,
 ) -> List[Tuple[int, float]]:
-    """Reciprocal Rank Fusion to combine multiple ranked lists.
+    """Reciprocal Rank Fusion to combine multiple ranked lists with optional weights.
 
     Args:
         ranked_lists: List of ranked lists, each containing (doc_index, score) tuples.
         k: RRF constant (default from settings).
+        weights: Per-list weights (default: uniform). Must match len(ranked_lists).
 
     Returns:
         Fused ranked list of (doc_index, rrf_score) tuples, sorted descending.
     """
     k = k or settings.rrf_k
+    if weights is None:
+        weights = [1.0] * len(ranked_lists)
+
     rrf_scores: Dict[int, float] = {}
 
-    for ranked_list in ranked_lists:
+    for w, ranked_list in zip(weights, ranked_lists):
         for rank, (doc_idx, _score) in enumerate(ranked_list):
             if doc_idx not in rrf_scores:
                 rrf_scores[doc_idx] = 0.0
-            rrf_scores[doc_idx] += 1.0 / (k + rank + 1)
+            rrf_scores[doc_idx] += w / (k + rank + 1)
 
     sorted_results = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
     return sorted_results

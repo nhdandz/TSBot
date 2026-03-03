@@ -42,10 +42,80 @@ class HybridReranker:
                 self._model = None
         return self._model
 
+    def _extract_target_entities(self, query: str) -> dict:
+        """Trích xuất các thực thể ngữ cảnh cần khớp trong chunk.
+
+        Dùng để boost chunk chứa quy định RIÊNG khi query hỏi về
+        đối tượng cụ thể (khu vực, dân tộc), tránh LLM dùng quy định chung.
+
+        Returns:
+            Dict with 'khu_vuc' (str | None), 'dan_toc' (bool).
+        """
+        q = query.lower()
+        entities: dict = {"khu_vuc": None, "dan_toc": False}
+
+        # Khu vực 1 / 2 / 3
+        if re.search(r"khu\s*vực\s*1|kv\s*1|hải\s*đảo", q):
+            entities["khu_vuc"] = "1"
+        elif re.search(r"khu\s*vực\s*2|kv\s*2", q):
+            entities["khu_vuc"] = "2"
+        elif re.search(r"khu\s*vực\s*3|kv\s*3", q):
+            entities["khu_vuc"] = "3"
+
+        # Dân tộc thiểu số
+        if re.search(r"dân\s*tộc\s*thiểu\s*số|dtts|vùng\s*cao", q):
+            entities["dan_toc"] = True
+
+        return entities
+
+    def _entity_match_bonus(self, query: str, content: str) -> float:
+        """Bonus cho chunk chứa quy định RIÊNG khớp với đối tượng trong query.
+
+        Ví dụ: query hỏi "khu vực 1" → Diem d (khu vực 1: 1.60m) được +0.35
+        so với Diem b (quy định chung: 1.65m) → Diem d lên #1 trong reranking.
+
+        Returns:
+            Bonus score (0.0 – 0.35).
+        """
+        entities = self._extract_target_entities(query)
+        content_lower = content.lower()
+        bonus = 0.0
+
+        if entities["khu_vuc"]:
+            kv = entities["khu_vuc"]
+            kv_patterns = {
+                "1": r"khu\s*vực\s*1|hải\s*đảo|dân\s*tộc\s*thiểu\s*số",
+                "2": r"khu\s*vực\s*2",
+                "3": r"khu\s*vực\s*3",
+            }
+            if re.search(kv_patterns.get(kv, ""), content_lower):
+                bonus = max(bonus, 0.35)
+
+        if entities["dan_toc"] and re.search(r"dân\s*tộc\s*thiểu\s*số", content_lower):
+            bonus = max(bonus, 0.30)
+
+        return bonus
+
+    def _extract_cited_references(self, query: str) -> dict:
+        """Extract cited legal references from query (Điều, Khoản, Chương).
+
+        Args:
+            query: User query.
+
+        Returns:
+            Dict with 'article', 'clause', 'chapter' lists.
+        """
+        return {
+            "article": re.findall(r'(?:điều|Điều)\s+(\d+)', query, re.IGNORECASE),
+            "clause":  re.findall(r'(?:khoản|Khoản)\s+(\d+)', query, re.IGNORECASE),
+            "chapter": re.findall(r'(?:chương|Chương)\s+([IVXLCDM]+|\d+)', query, re.IGNORECASE),
+        }
+
     def calculate_metadata_score(self, chunk: Dict, query: str) -> float:
         """Calculate score based on document metadata and structure.
 
-        Uses section_type weighting, title matching, and content length bonus.
+        Uses section_type weighting, title matching, content length bonus,
+        and citation exact-match bonus.
 
         Args:
             chunk: Chunk dictionary with metadata.
@@ -90,6 +160,22 @@ class HybridReranker:
         elif content_len > 100:
             score += 0.05
 
+        # 4. Citation exact-match bonus (Điều/Khoản/Chương được nhắc trực tiếp)
+        cited_refs = self._extract_cited_references(query)
+        if any(cited_refs.values()):
+            cite_bonus = 0.0
+            if str(metadata.get("article", "")) in cited_refs.get("article", []):
+                cite_bonus = max(cite_bonus, 0.40)
+            if str(metadata.get("chapter", "")) in cited_refs.get("chapter", []):
+                cite_bonus = max(cite_bonus, 0.20)
+            if str(metadata.get("clause", "")) in cited_refs.get("clause", []):
+                cite_bonus += 0.15
+            score += cite_bonus
+
+        # 5. Entity match bonus (khu vực, dân tộc thiểu số)
+        # Đảm bảo quy định riêng luôn xếp trên quy định chung khi query hỏi về đối tượng cụ thể
+        score += self._entity_match_bonus(query, content)
+
         return min(score, 1.0)
 
     def _get_section_type(self, chunk: Dict) -> str:
@@ -112,7 +198,8 @@ class HybridReranker:
     def _build_rich_text(self, chunk: Dict) -> str:
         """Build rich text for cross-encoder scoring.
 
-        Includes parent context + title + legal path + truncated content.
+        Order: legal path → title → content (main) → parent context (brief).
+        Placing content before parent ensures CE attention focuses on main content.
 
         Args:
             chunk: Chunk dictionary.
@@ -122,30 +209,30 @@ class HybridReranker:
         """
         parts = []
 
-        # Parent context
+        # 1. Legal path (short, locates document)
+        legal_path = build_legal_hierarchy_path(chunk)
+        if legal_path:
+            parts.append(legal_path)
+
+        # 2. Title (≤100 chars)
+        metadata = chunk.get("metadata", {})
+        title = metadata.get("article_title") or metadata.get("section_title") or metadata.get("chapter_title", "")
+        if title:
+            parts.append(title[:100])
+
+        # 3. Main content FIRST (≤400 chars) — CE attention priority
+        content = chunk.get("content", "")
+        parts.append(content[:400])
+
+        # 4. Parent context LAST (≤80 chars, reduced from 150)
         try:
             parents = find_parent_chunks(chunk, max_levels=1)
             for parent in parents:
                 parent_content = parent.get("content", "")
                 if parent_content:
-                    parts.append(parent_content[:150])
+                    parts.append(parent_content[:80])
         except Exception:
             pass
-
-        # Legal path
-        legal_path = build_legal_hierarchy_path(chunk)
-        if legal_path:
-            parts.append(legal_path)
-
-        # Title
-        metadata = chunk.get("metadata", {})
-        title = metadata.get("article_title") or metadata.get("section_title") or metadata.get("chapter_title", "")
-        if title:
-            parts.append(title)
-
-        # Content (truncated)
-        content = chunk.get("content", "")
-        parts.append(content[:600])
 
         return " | ".join(parts)
 
@@ -155,14 +242,16 @@ class HybridReranker:
         chunks: List[Dict],
         top_k: int = None,
         use_ensemble: bool = True,
+        intent: str = "general",
     ) -> List[Dict]:
-        """Perform hybrid reranking.
+        """Perform hybrid reranking with intent-adaptive weights.
 
         Args:
             query: User query.
             chunks: List of chunk dicts (must have 'content', 'metadata', 'score').
             top_k: Number of chunks to return.
             use_ensemble: Use ensemble scoring (CE + retrieval + metadata).
+            intent: Detected query intent for adaptive weight selection.
 
         Returns:
             Reranked list of chunks with '_rerank_score' field.
@@ -171,6 +260,9 @@ class HybridReranker:
             return []
 
         top_k = top_k or settings.reranker_top_k
+
+        # Select intent-adaptive weights
+        weights = settings.reranker_weights_by_intent.get(intent, settings.reranker_weights)
 
         # Try cross-encoder scoring
         ce_scores = None
@@ -192,11 +284,11 @@ class HybridReranker:
             meta_score = self.calculate_metadata_score(chunk, query)
 
             if ce_scores is not None and use_ensemble and settings.reranker_ensemble:
-                # Ensemble: CE 55% + Retrieval 35% + Metadata 10%
+                # Ensemble with intent-adaptive weights
                 final_score = (
-                    self.weights["cross_encoder"] * ce_scores[i]
-                    + self.weights["retrieval"] * retrieval_score
-                    + self.weights["metadata"] * meta_score
+                    weights["cross_encoder"] * ce_scores[i]
+                    + weights["retrieval"] * retrieval_score
+                    + weights["metadata"] * meta_score
                 )
             else:
                 # Fallback: Retrieval 70% + Metadata 30%
@@ -208,6 +300,7 @@ class HybridReranker:
                 "retrieval": round(retrieval_score, 3),
                 "meta": round(meta_score, 3),
                 "final": round(final_score, 3),
+                "intent": intent,
             }
             scored_chunks.append(chunk)
 

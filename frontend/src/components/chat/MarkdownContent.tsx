@@ -12,6 +12,13 @@ type Segment =
   | { type: 'text'; content: string }
   | { type: 'table'; headers: string[]; rows: string[][] }
 
+/** Đảm bảo blank line trước heading để remark-breaks không phá vỡ render */
+function preprocessMarkdown(content: string): string {
+  return content
+    .replace(/([^\n])\n(#{1,6}\s)/g, '$1\n\n$2')  // blank line trước heading
+    .replace(/(#{1,6}\s[^\n]+)\n([^\n#>-])/g, '$1\n\n$2') // blank line sau heading
+}
+
 function parseContent(content: string): Segment[] {
   const lines = content.split('\n')
   const segments: Segment[] = []
@@ -80,7 +87,7 @@ const MD_COMPONENTS = {
     <h3 className="text-base font-semibold text-foreground/90 mt-3 mb-2 first:mt-0" {...props} />
   ),
   p: ({ ...props }) => (
-    <p className="mb-3 leading-relaxed text-foreground/80 last:mb-0 text-sm" {...props} />
+    <p className="mb-3 leading-relaxed text-foreground/80 last:mb-0 text-sm text-justify" {...props} />
   ),
   ul: ({ ...props }) => (
     <ul className="mb-3 space-y-1.5 pl-6 list-disc" {...props} />
@@ -89,7 +96,7 @@ const MD_COMPONENTS = {
     <ol className="mb-3 space-y-1.5 pl-6 list-decimal" {...props} />
   ),
   li: ({ ...props }) => (
-    <li className="leading-relaxed text-foreground/80 text-sm" {...props} />
+    <li className="leading-relaxed text-foreground/80 text-sm text-justify" {...props} />
   ),
   code: ({ ...props }) => (
     <code className="bg-muted/60 px-1.5 py-0.5 rounded-md text-[13px] font-mono text-foreground/80" {...props} />
@@ -98,7 +105,7 @@ const MD_COMPONENTS = {
     <pre className="bg-muted/40 p-4 rounded-xl my-3 overflow-x-auto border border-border/40" {...props} />
   ),
   blockquote: ({ ...props }) => (
-    <blockquote className="border-l-4 border-olive pl-4 py-2 my-3 italic text-muted-foreground bg-muted/30 rounded-r-lg" {...props} />
+    <blockquote className="border-l-[3px] border-olive pl-4 pr-3 py-3 my-3 italic text-foreground/70 bg-muted/50 rounded-r-md text-sm text-justify" {...props} />
   ),
   a: ({ ...props }) => (
     <a className="text-primary hover:text-primary/80 hover:underline font-medium transition-colors" target="_blank" rel="noopener noreferrer" {...props} />
@@ -115,7 +122,7 @@ const MD_COMPONENTS = {
 }
 
 export function MarkdownContent({ content, className = '' }: MarkdownContentProps) {
-  const segments = parseContent(content)
+  const segments = parseContent(preprocessMarkdown(content))
 
   return (
     <div className={`markdown-content ${className}`}>

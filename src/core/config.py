@@ -88,8 +88,8 @@ class Settings(BaseSettings):
     embedding_dimension: int = 1024
 
     # RAG
-    rag_chunk_size: int = 512
-    rag_chunk_overlap: int = 50
+    rag_chunk_size: int = 800
+    rag_chunk_overlap: int = 120
     rag_top_k: int = 5
     rag_relevance_threshold: float = 0.7
     
@@ -108,6 +108,13 @@ class Settings(BaseSettings):
     reranker_model: str = "namdp-ptit/ViRanker"
     reranker_top_k: int = 3
     reranker_weights: dict = {"cross_encoder": 0.55, "retrieval": 0.35, "metadata": 0.10}
+    reranker_weights_by_intent: dict = {
+        "specific":    {"cross_encoder": 0.65, "retrieval": 0.25, "metadata": 0.10},
+        "comparison":  {"cross_encoder": 0.55, "retrieval": 0.35, "metadata": 0.10},
+        "list":        {"cross_encoder": 0.45, "retrieval": 0.45, "metadata": 0.10},
+        "explanation": {"cross_encoder": 0.60, "retrieval": 0.30, "metadata": 0.10},
+        "general":     {"cross_encoder": 0.55, "retrieval": 0.35, "metadata": 0.10},
+    }
 
     # Advanced RAG (from backend_v2)
     use_cross_encoder: bool = True
@@ -119,7 +126,10 @@ class Settings(BaseSettings):
     dedup_threshold: float = 0.95
     bm25_k1: float = 1.5
     bm25_b: float = 0.75
+    bm25_use_bigrams: bool = True
     rrf_k: int = 60
+    rrf_dense_weight: float = 0.6
+    rrf_sparse_weight: float = 0.4
     max_chunks_multi: int = 3
     max_smart_descendants: int = 5
     min_descendant_score: float = 0.3
@@ -127,12 +137,14 @@ class Settings(BaseSettings):
     min_sibling_score: float = 0.4
 
     # Adaptive context settings per intent
+    # list: sau Parent Promotion, chunks là khoan-level → cần max_descendants cao
+    #        để enumerate tất cả a/b/c/d/đ; chunks=3 đủ vì mỗi khoan đã rất đầy đủ
     context_settings: dict = {
-        "specific": {"chunks": 2, "max_descendants": 5, "max_siblings": 2, "include_parents": True},
-        "comparison": {"chunks": 2, "max_descendants": 2, "max_siblings": 3, "include_parents": True},
-        "list": {"chunks": 2, "max_descendants": 40, "max_siblings": 5, "include_parents": True},
-        "explanation": {"chunks": 3, "max_descendants": 4, "max_siblings": 3, "include_parents": True},
-        "general": {"chunks": 3, "max_descendants": 5, "max_siblings": 2, "include_parents": True},
+        "specific":    {"chunks": 2, "max_descendants": 3,  "max_siblings": 1, "include_parents": True},
+        "comparison":  {"chunks": 3, "max_descendants": 2,  "max_siblings": 3, "include_parents": True},
+        "list":        {"chunks": 3, "max_descendants": 12, "max_siblings": 1, "include_parents": True},
+        "explanation": {"chunks": 3, "max_descendants": 4,  "max_siblings": 2, "include_parents": True},
+        "general":     {"chunks": 3, "max_descendants": 5,  "max_siblings": 2, "include_parents": True},
     }
 
     # Chunks JSON path
@@ -203,4 +215,4 @@ def get_eval_settings() -> EvalSettings:
 
 
 # Global settings instance
-settings = get_settings()
+settings = get_settings() 

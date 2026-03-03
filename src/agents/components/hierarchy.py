@@ -313,46 +313,139 @@ def enrich_with_all_siblings(
     chunks: List[Dict],
     query: str,
     query_embedding: np.ndarray,
+    intent: str = "general",
 ) -> List[Dict]:
-    """Enrich retrieved chunks with ALL siblings for mid-level sections.
+    """Enrich retrieved chunks by adding relevant siblings.
 
-    For dieu/muc level chunks, add all siblings to provide complete context.
+    Level-based strategy:
+    - diem (letter-point a/b/c): Add ALL siblings in same khoản (≤ 12)
+      → Ensures LLM sees the full list when a single item is retrieved
+    - khoan (numeric 1/2/3): Add score-based siblings if khoản count ≤ 8
+    - dieu/muc: Add score-based siblings (existing behavior)
 
     Args:
         chunks: Retrieved chunks.
         query: Search query.
         query_embedding: Query embedding.
+        intent: Query intent for adaptive thresholds.
 
     Returns:
         Enriched list of chunks.
     """
     enriched = list(chunks)
-    seen_ids = set()
+    seen_ids: set = set()
     for c in chunks:
         cid = c.get("id") or c.get("metadata", {}).get("chunk_id")
         if cid:
             seen_ids.add(cid)
 
+    chunk_map = _get_chunk_map()
+    is_list = intent == "list"
+
     for chunk in chunks:
         section_type = _get_section_type(chunk)
+        metadata = chunk.get("metadata", {})
+        sibling_ids: List[str] = metadata.get("sibling_ids", [])
+        sibling_count = len(sibling_ids)
 
-        # Only enrich mid-level sections (dieu, muc)
-        if section_type not in ("dieu", "muc"):
-            continue
-
-        siblings = find_smart_siblings(chunk, query, query_embedding, max_siblings=5, min_score=0.3)
-
-        for sib in siblings:
-            sib_id = sib.get("id") or sib.get("metadata", {}).get("chunk_id")
-            if sib_id and sib_id not in seen_ids:
-                seen_ids.add(sib_id)
+        # --- diem (a/b/c): thêm TẤT CẢ siblings trong cùng Khoản ---
+        # Guard ≤ 12: tránh explosion khi Khoản có quá nhiều điểm
+        if section_type == "diem" and 0 < sibling_count <= 12:
+            for sib_id in sibling_ids:
+                if sib_id in seen_ids or sib_id not in chunk_map:
+                    continue
+                sib = chunk_map[sib_id]
                 sib["_is_sibling_enrichment"] = True
+                seen_ids.add(sib_id)
                 enriched.append(sib)
 
-    if len(enriched) > len(chunks):
-        logger.info(f"Sibling enrichment: {len(chunks)} -> {len(enriched)} chunks")
+        # --- khoan (1/2/3): score-based siblings trong cùng Điều ---
+        # Guard ≤ 8: Điều thường có ít hơn 8 khoản
+        elif section_type == "khoan" and 0 < sibling_count <= 8:
+            max_sib = 5 if is_list else 3
+            min_scr = 0.25 if is_list else 0.35
+            siblings = find_smart_siblings(
+                chunk, query, query_embedding,
+                max_siblings=max_sib, min_score=min_scr,
+            )
+            for sib in siblings:
+                sib_id = sib.get("id") or sib.get("metadata", {}).get("chunk_id")
+                if sib_id and sib_id not in seen_ids:
+                    sib["_is_sibling_enrichment"] = True
+                    seen_ids.add(sib_id)
+                    enriched.append(sib)
+
+        # --- dieu/muc: score-based siblings (hành vi cũ) ---
+        elif section_type in ("dieu", "muc"):
+            max_sib = 5 if is_list else 3
+            siblings = find_smart_siblings(
+                chunk, query, query_embedding,
+                max_siblings=max_sib, min_score=0.3,
+            )
+            for sib in siblings:
+                sib_id = sib.get("id") or sib.get("metadata", {}).get("chunk_id")
+                if sib_id and sib_id not in seen_ids:
+                    sib["_is_sibling_enrichment"] = True
+                    seen_ids.add(sib_id)
+                    enriched.append(sib)
+
+    added = len(enriched) - len(chunks)
+    if added > 0:
+        logger.info(f"Sibling enrichment [{intent}]: {len(chunks)} → {len(enriched)} (+{added} siblings)")
 
     return enriched
+
+
+# --- Parent Promotion ---
+
+def promote_diem_to_parent(chunks: List[Dict]) -> List[Dict]:
+    """Thay thế 'diem' chunks bằng 'khoan' cha của chúng.
+
+    Dùng cho "list" intent. Chunk khoan cha cung cấp đầy đủ nội dung
+    (tất cả điểm a/b/c/d/đ) thông qua descendant enrichment trong
+    build_enriched_context — thay vì gom nhiều chunk nhỏ riêng lẻ.
+
+    Không áp dụng cho "specific" intent để tránh lẫn các quy định
+    riêng (ví dụ: Diem b vs Diem d cho khu vực khác nhau).
+
+    Args:
+        chunks: Candidate chunks (có thể gồm diem + các level khác).
+
+    Returns:
+        Chunks đã promote: diem → khoan cha (deduplicated).
+    """
+    chunk_map = _get_chunk_map()
+    result: List[Dict] = []
+    seen_ids: set = set()
+
+    for chunk in chunks:
+        section_type = _get_section_type(chunk)
+        chunk_id = chunk.get("id") or chunk.get("metadata", {}).get("chunk_id")
+
+        if section_type == "diem":
+            parent_id = chunk.get("metadata", {}).get("parent_id")
+            if parent_id and parent_id in chunk_map:
+                if parent_id not in seen_ids:
+                    seen_ids.add(parent_id)
+                    result.append(chunk_map[parent_id])
+                # bỏ diem chunk (đã được thay bằng parent)
+            else:
+                # không tìm thấy parent → giữ diem gốc
+                if chunk_id and chunk_id not in seen_ids:
+                    seen_ids.add(chunk_id)
+                    result.append(chunk)
+        else:
+            if chunk_id and chunk_id not in seen_ids:
+                seen_ids.add(chunk_id)
+                result.append(chunk)
+
+    if len(result) != len(chunks):
+        logger.info(
+            f"Parent promotion: {len(chunks)} → {len(result)} chunks "
+            f"(diem chunks → khoan cha)"
+        )
+
+    return result
 
 
 # --- Smart Merging ---
@@ -466,6 +559,7 @@ def build_enriched_context(
         Enriched context string.
     """
     cs = context_settings or settings.context_settings.get("general", {})
+    section_type = _get_section_type(chunk)
     parts = []
 
     # Legal path
@@ -488,30 +582,35 @@ def build_enriched_context(
     parts.append(f"Nội dung chính:\n{content}")
 
     # Smart descendants
-    max_desc = cs.get("max_descendants", settings.max_smart_descendants)
-    if max_desc > 0:
-        descendants = find_smart_descendants(chunk, query, query_embedding, max_descendants=max_desc)
-        if descendants:
-            desc_parts = []
-            for desc in descendants:
-                desc_path = build_legal_hierarchy_path(desc)
-                desc_content = desc.get("content", "")
-                prefix = f"[{desc_path}] " if desc_path else ""
-                desc_parts.append(f"  - {prefix}{desc_content}")
-            parts.append("Các mục con liên quan:\n" + "\n".join(desc_parts))
+    # Skip cho diem level: leaf node, không có children; tránh gọi embedding không cần thiết
+    if section_type != "diem":
+        max_desc = cs.get("max_descendants", settings.max_smart_descendants)
+        if max_desc > 0:
+            descendants = find_smart_descendants(chunk, query, query_embedding, max_descendants=max_desc)
+            if descendants:
+                desc_parts = []
+                for desc in descendants:
+                    desc_path = build_legal_hierarchy_path(desc)
+                    desc_content = desc.get("content", "")
+                    prefix = f"[{desc_path}] " if desc_path else ""
+                    desc_parts.append(f"  - {prefix}{desc_content}")
+                parts.append("Các mục con liên quan:\n" + "\n".join(desc_parts))
 
     # Smart siblings
-    max_sib = cs.get("max_siblings", settings.max_smart_siblings)
-    if max_sib > 0:
-        siblings = find_smart_siblings(chunk, query, query_embedding, max_siblings=max_sib)
-        if siblings:
-            sib_parts = []
-            for sib in siblings:
-                sib_path = build_legal_hierarchy_path(sib)
-                sib_content = sib.get("content", "")
-                prefix = f"[{sib_path}] " if sib_path else ""
-                sib_parts.append(f"  - {prefix}{sib_content}")
-            parts.append("Các mục cùng cấp:\n" + "\n".join(sib_parts))
+    # Skip cho diem level: siblings đã được thêm vào merged list qua enrich_with_all_siblings (step 5.5)
+    # → tránh duplicate content trong context
+    if section_type != "diem":
+        max_sib = cs.get("max_siblings", settings.max_smart_siblings)
+        if max_sib > 0:
+            siblings = find_smart_siblings(chunk, query, query_embedding, max_siblings=max_sib)
+            if siblings:
+                sib_parts = []
+                for sib in siblings:
+                    sib_path = build_legal_hierarchy_path(sib)
+                    sib_content = sib.get("content", "")
+                    prefix = f"[{sib_path}] " if sib_path else ""
+                    sib_parts.append(f"  - {prefix}{sib_content}")
+                parts.append("Các mục cùng cấp:\n" + "\n".join(sib_parts))
 
     return "\n\n".join(parts)
 

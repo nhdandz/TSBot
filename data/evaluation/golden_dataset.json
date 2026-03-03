@@ -1,10 +1,12 @@
 {
-  "version": "1.0",
+  "version": "2.0",
   "description": "Golden dataset cho đánh giá RAG pipeline TSBot - tuyển sinh quân sự Việt Nam",
   "samples": [
     {
       "id": "rag_001",
       "category": "suc_khoe",
+      "difficulty": "easy",
+      "requires_citation": false,
       "question": "Tiêu chuẩn thị lực để tuyển sinh vào trường quân sự là gì?",
       "ground_truth": "Thí sinh tuyển sinh vào các trường quân sự cần đáp ứng tiêu chuẩn sức khỏe theo quy định của Bộ Quốc phòng. Thị lực cần đạt yêu cầu tối thiểu theo quy định hiện hành, thông thường không có tật khúc xạ nặng hoặc các bệnh về mắt ảnh hưởng đến khả năng thực hiện nhiệm vụ.",
       "keywords": ["thị lực", "sức khỏe", "tiêu chuẩn", "mắt"]
@@ -12,6 +14,8 @@
     {
       "id": "rag_002",
       "category": "diem_chuan",
+      "difficulty": "easy",
+      "requires_citation": false,
       "question": "Điểm chuẩn tuyển sinh vào Học viện Kỹ thuật Quân sự năm ngoái là bao nhiêu?",
       "ground_truth": "Điểm chuẩn của Học viện Kỹ thuật Quân sự thay đổi theo từng năm và từng ngành học. Thí sinh cần tham khảo thông báo tuyển sinh chính thức của Học viện hoặc Bộ Quốc phòng để có thông tin điểm chuẩn cụ thể và cập nhật nhất.",
       "keywords": ["điểm chuẩn", "Học viện Kỹ thuật Quân sự", "tuyển sinh"]
@@ -19,6 +23,8 @@
     {
       "id": "rag_003",
       "category": "dieu_kien",
+      "difficulty": "easy",
+      "requires_citation": false,
       "question": "Thí sinh nữ có được thi vào trường sĩ quan quân sự không?",
       "ground_truth": "Thí sinh nữ được phép thi tuyển vào một số trường và ngành đào tạo trong hệ thống các trường quân sự. Tuy nhiên, một số ngành và trường chỉ tuyển sinh nam. Thí sinh nữ cần xem xét kỹ thông báo tuyển sinh của từng trường để biết các ngành có tuyển nữ và các tiêu chuẩn riêng áp dụng.",
       "keywords": ["nữ", "thí sinh nữ", "điều kiện", "giới tính"]
@@ -26,6 +32,8 @@
     {
       "id": "rag_004",
       "category": "ho_so",
+      "difficulty": "easy",
+      "requires_citation": false,
       "question": "Hồ sơ đăng ký dự tuyển vào trường quân sự gồm những gì?",
       "ground_truth": "Hồ sơ đăng ký dự tuyển vào các trường quân sự thông thường bao gồm: đơn đăng ký thi tuyển, bản sao học bạ THPT, giấy khai sinh, hộ khẩu, giấy chứng nhận sức khỏe từ cơ sở y tế có thẩm quyền, lý lịch tự khai có xác nhận của địa phương, và các giấy tờ chứng minh đối tượng ưu tiên (nếu có).",
       "keywords": ["hồ sơ", "giấy tờ", "đăng ký", "dự tuyển"]
@@ -33,6 +41,8 @@
     {
       "id": "rag_005",
       "category": "uu_tien",
+      "difficulty": "medium",
+      "requires_citation": true,
       "question": "Con thương binh liệt sĩ được ưu tiên gì khi thi vào trường quân sự?",
       "ground_truth": "Con liệt sĩ, con thương binh, con bệnh binh thuộc đối tượng ưu tiên theo quy định tuyển sinh đại học, cao đẳng. Theo quy định hiện hành của Bộ Giáo dục và Đào tạo, con liệt sĩ được cộng điểm ưu tiên theo đối tượng tương ứng. Ngoài ra, một số trường quân sự có thể có chính sách ưu tiên riêng. Thí sinh cần tham khảo thông báo tuyển sinh cụ thể.",
       "keywords": ["ưu tiên", "thương binh", "liệt sĩ", "cộng điểm", "chính sách"]
@@ -40,6 +50,8 @@
     {
       "id": "rag_006",
       "category": "quy_trinh",
+      "difficulty": "medium",
+      "requires_citation": false,
       "question": "Quy trình thi tuyển vào trường quân sự như thế nào?",
       "ground_truth": "Quy trình thi tuyển vào trường quân sự thường gồm các bước: đăng ký dự tuyển và nộp hồ sơ, sơ tuyển tại địa phương (kiểm tra hồ sơ, sức khỏe sơ bộ, lý lịch), thi tốt nghiệp THPT quốc gia, khám sức khỏe chuyên sâu tại cơ sở quân y, kiểm tra thể lực, và cuối cùng là xét tuyển dựa trên kết quả thi cùng các tiêu chí khác.",
       "keywords": ["quy trình", "các bước", "sơ tuyển", "thể lực", "thi tuyển"]
@@ -47,6 +59,8 @@
     {
       "id": "rag_007",
       "category": "the_luc",
+      "difficulty": "easy",
+      "requires_citation": false,
       "question": "Tiêu chuẩn thể lực khi thi vào trường quân sự gồm những bài kiểm tra gì?",
       "ground_truth": "Kiểm tra thể lực khi thi vào trường quân sự thường bao gồm các nội dung: chạy nhanh 100m, chạy bền 1500m hoặc 3000m, bài tập cơ bản như kéo xà, chống đẩy, và có thể bơi lội. Tiêu chuẩn cụ thể phụ thuộc vào từng trường và có thể khác nhau giữa nam và nữ. Thí sinh cần rèn luyện thể lực trước khi dự thi.",
       "keywords": ["thể lực", "kiểm tra thể lực", "chạy", "bơi", "tiêu chuẩn"]
@@ -54,6 +68,8 @@
     {
       "id": "rag_008",
       "category": "khu_vuc",
+      "difficulty": "medium",
+      "requires_citation": true,
       "question": "Thí sinh ở vùng sâu vùng xa được cộng bao nhiêu điểm ưu tiên khu vực?",
       "ground_truth": "Điểm ưu tiên khu vực áp dụng theo quy định của Bộ Giáo dục và Đào tạo: khu vực 1 (vùng sâu xa) được cộng 0.75 điểm, khu vực 2 nông thôn được cộng 0.25 điểm, khu vực 2 (thành thị khu vực 2) không được cộng điểm. Tuy nhiên từ năm 2023, quy định điểm ưu tiên đã điều chỉnh giảm dần theo điểm thi. Thí sinh cần kiểm tra quy định năm thi để biết chính xác.",
       "keywords": ["khu vực", "ưu tiên khu vực", "vùng sâu xa", "cộng điểm"]
@@ -61,6 +77,8 @@
     {
       "id": "rag_009",
       "category": "suc_khoe",
+      "difficulty": "medium",
+      "requires_citation": false,
       "question": "Thí sinh có hình xăm có được thi vào trường quân sự không?",
       "ground_truth": "Theo quy định tuyển sinh quân sự, thí sinh có hình xăm ở những vị trí lộ ra ngoài khi mặc quân phục thông thường sẽ không đủ điều kiện. Tuy nhiên quy định cụ thể về hình xăm có thể thay đổi theo từng năm và từng trường. Thí sinh cần đọc kỹ thông báo tuyển sinh mới nhất để nắm rõ quy định.",
       "keywords": ["hình xăm", "điều kiện", "sức khỏe", "ngoại hình"]
@@ -68,9 +86,209 @@
     {
       "id": "rag_010",
       "category": "dau_ra",
+      "difficulty": "easy",
+      "requires_citation": false,
       "question": "Tốt nghiệp trường quân sự sẽ được phong quân hàm gì?",
       "ground_truth": "Sau khi tốt nghiệp các trường quân sự hệ sĩ quan, học viên thường được phong quân hàm Thiếu úy và biên chế về các đơn vị trong toàn quân. Đối với hệ đào tạo ngắn hạn hoặc chuyên ngành đặc biệt, cấp bậc có thể khác nhau. Quá trình thăng tiến quân hàm sau đó phụ thuộc vào thâm niên, năng lực và vị trí công tác.",
       "keywords": ["quân hàm", "thiếu úy", "tốt nghiệp", "sĩ quan"]
+    },
+    {
+      "id": "rag_011",
+      "category": "tuyen_thang",
+      "difficulty": "medium",
+      "requires_citation": true,
+      "question": "Thí sinh có thành tích gì được tuyển thẳng vào trường quân sự?",
+      "ground_truth": "Thí sinh đạt giải nhất, nhì, ba trong các kỳ thi học sinh giỏi quốc gia, hoặc đạt huy chương vàng, bạc, đồng trong các kỳ thi quốc tế được xem xét tuyển thẳng vào các trường đại học, trong đó có trường quân sự. Ngoài ra, một số trường quân sự có quy định tuyển thẳng riêng đối với con em cán bộ chiến sĩ hoặc học sinh xuất sắc từ địa phương đặc biệt.",
+      "keywords": ["tuyển thẳng", "thành tích", "học sinh giỏi", "huy chương"]
+    },
+    {
+      "id": "rag_012",
+      "category": "tuyen_thang",
+      "difficulty": "hard",
+      "requires_citation": true,
+      "question": "Học sinh đạt huy chương vàng Olympic quốc tế có được tuyển thẳng vào Học viện Kỹ thuật Quân sự không?",
+      "ground_truth": "Học sinh đạt huy chương vàng Olympic quốc tế thuộc đối tượng được ưu tiên tuyển thẳng theo quy định của Bộ Giáo dục và Đào tạo. Đối với các trường quân sự như Học viện Kỹ thuật Quân sự, việc tuyển thẳng còn phải đáp ứng các tiêu chuẩn chính trị, sức khỏe và lý lịch theo quy định của Bộ Quốc phòng. Thí sinh cần liên hệ trực tiếp với nhà trường để xác nhận.",
+      "keywords": ["tuyển thẳng", "Olympic", "huy chương vàng", "HVKTQS"]
+    },
+    {
+      "id": "rag_013",
+      "category": "tuyen_thang",
+      "difficulty": "hard",
+      "requires_citation": true,
+      "question": "Thí sinh đạt giải ba cuộc thi học sinh giỏi quốc gia môn Toán có đủ tiêu chuẩn tuyển thẳng không?",
+      "ground_truth": "Theo quy định hiện hành, thí sinh đạt giải ba kỳ thi học sinh giỏi quốc gia được xem xét tuyển thẳng. Tuy nhiên, đối với các trường quân sự, ngoài điều kiện học lực, thí sinh còn phải đáp ứng đủ các tiêu chuẩn về sức khỏe, lý lịch chính trị và thể lực theo quy định của Bộ Quốc phòng.",
+      "keywords": ["tuyển thẳng", "giải ba", "học sinh giỏi quốc gia", "Toán"]
+    },
+    {
+      "id": "rag_014",
+      "category": "doi_tuong",
+      "difficulty": "medium",
+      "requires_citation": true,
+      "question": "Các đối tượng nào được hưởng chính sách ưu tiên khi thi vào trường quân sự?",
+      "ground_truth": "Theo quy định, các đối tượng được hưởng chính sách ưu tiên bao gồm: con liệt sĩ, con thương binh, con bệnh binh; người dân tộc thiểu số; thí sinh ở khu vực vùng sâu vùng xa, biên giới, hải đảo; con em cán bộ chiến sĩ trong lực lượng vũ trang. Mức cộng điểm ưu tiên phụ thuộc vào từng đối tượng và khu vực cư trú.",
+      "keywords": ["đối tượng ưu tiên", "dân tộc thiểu số", "liệt sĩ", "cộng điểm"]
+    },
+    {
+      "id": "rag_015",
+      "category": "doi_tuong",
+      "difficulty": "medium",
+      "requires_citation": false,
+      "question": "Con em cán bộ sĩ quan quân đội có được ưu tiên tuyển sinh không?",
+      "ground_truth": "Con em cán bộ, sĩ quan quân đội có thể được hưởng một số chính sách ưu tiên tùy theo quy định cụ thể của từng trường quân sự và quy định của Bộ Quốc phòng. Tuy nhiên mức ưu tiên và điều kiện áp dụng cần được xác nhận qua thông báo tuyển sinh chính thức hàng năm.",
+      "keywords": ["con em cán bộ", "sĩ quan", "ưu tiên", "quân đội"]
+    },
+    {
+      "id": "rag_016",
+      "category": "nganh_hoc",
+      "difficulty": "easy",
+      "requires_citation": false,
+      "question": "Học viện Kỹ thuật Quân sự đào tạo những ngành gì?",
+      "ground_truth": "Học viện Kỹ thuật Quân sự đào tạo các ngành kỹ thuật quân sự bao gồm: kỹ thuật điện tử viễn thông, kỹ thuật cơ khí động lực, kỹ thuật vũ khí, công nghệ thông tin, kỹ thuật hàng không vũ trụ, và một số ngành kỹ thuật chuyên biệt khác phục vụ quốc phòng. Danh sách ngành cụ thể cần tham khảo thông báo tuyển sinh hàng năm.",
+      "keywords": ["ngành học", "HVKTQS", "kỹ thuật quân sự", "đào tạo"]
+    },
+    {
+      "id": "rag_017",
+      "category": "nganh_hoc",
+      "difficulty": "medium",
+      "requires_citation": false,
+      "question": "Học viện Quân y đào tạo bác sĩ quân y hay chỉ y tá?",
+      "ground_truth": "Học viện Quân y đào tạo bác sĩ quân y hệ chính quy (6 năm), bác sĩ y học cổ truyền, cử nhân điều dưỡng và các ngành y tế khác. Đây là cơ sở đào tạo nhân lực y tế chất lượng cao cho lực lượng quân đội. Học viên tốt nghiệp được phong cấp bậc sĩ quan quân y.",
+      "keywords": ["Học viện Quân y", "bác sĩ", "y tá", "điều dưỡng"]
+    },
+    {
+      "id": "rag_018",
+      "category": "nganh_hoc",
+      "difficulty": "hard",
+      "requires_citation": false,
+      "question": "Sự khác nhau giữa đào tạo sĩ quan và đào tạo kỹ thuật viên trong các trường quân sự là gì?",
+      "ground_truth": "Đào tạo sĩ quan quân sự nhằm cung cấp nhân lực chỉ huy, quản lý cho lực lượng vũ trang với chương trình kết hợp kiến thức quân sự và chuyên môn, thường 4-5 năm. Đào tạo kỹ thuật viên tập trung vào kỹ năng kỹ thuật cụ thể để vận hành, sửa chữa, bảo trì trang thiết bị quân sự, thời gian đào tạo thường ngắn hơn.",
+      "keywords": ["sĩ quan", "kỹ thuật viên", "so sánh", "đào tạo"]
+    },
+    {
+      "id": "rag_019",
+      "category": "dieu_chinh_nguyen_vong",
+      "difficulty": "medium",
+      "requires_citation": false,
+      "question": "Thí sinh có thể điều chỉnh nguyện vọng thi vào trường quân sự không?",
+      "ground_truth": "Thí sinh được phép điều chỉnh nguyện vọng trong thời gian quy định của Bộ Giáo dục và Đào tạo thông qua hệ thống trực tuyến. Tuy nhiên, đối với các trường quân sự, thí sinh cần lưu ý rằng việc đăng ký tuyển sinh quân sự thường có quy trình riêng bao gồm sơ tuyển tại địa phương, do đó việc điều chỉnh nguyện vọng cần thực hiện sớm và đúng thời hạn.",
+      "keywords": ["điều chỉnh nguyện vọng", "thời hạn", "hệ thống trực tuyến"]
+    },
+    {
+      "id": "rag_020",
+      "category": "dieu_chinh_nguyen_vong",
+      "difficulty": "hard",
+      "requires_citation": true,
+      "question": "Thí sinh đã đăng ký thi vào trường quân sự nhưng muốn chuyển sang trường dân sự thì phải làm gì?",
+      "ground_truth": "Thí sinh đã đăng ký tuyển sinh quân sự mà muốn chuyển sang trường dân sự cần thực hiện trong thời gian điều chỉnh nguyện vọng quy định. Cần làm thủ tục rút hồ sơ tại cơ sở đã nộp và điều chỉnh nguyện vọng trên hệ thống quản lý tuyển sinh. Lưu ý rằng một số hồ sơ sơ tuyển quân sự có thể không hoàn trả được.",
+      "keywords": ["chuyển nguyện vọng", "rút hồ sơ", "trường dân sự", "thủ tục"]
+    },
+    {
+      "id": "rag_021",
+      "category": "suc_khoe",
+      "difficulty": "medium",
+      "requires_citation": true,
+      "question": "Thí sinh bị cận thị có thể thi vào ngành nào trong trường quân sự?",
+      "ground_truth": "Tiêu chuẩn thị lực phụ thuộc vào từng ngành đào tạo. Một số ngành kỹ thuật, hành chính có thể chấp nhận thí sinh bị cận thị nhẹ (đã chỉnh kính), trong khi các ngành tác chiến, phi công, đặc công thường yêu cầu thị lực tự nhiên tốt. Thí sinh cần kiểm tra tiêu chuẩn sức khỏe cụ thể của từng ngành trong thông báo tuyển sinh.",
+      "keywords": ["cận thị", "thị lực", "ngành học", "tiêu chuẩn"]
+    },
+    {
+      "id": "rag_022",
+      "category": "suc_khoe",
+      "difficulty": "hard",
+      "requires_citation": true,
+      "question": "Chiều cao tối thiểu để thi vào trường sĩ quan quân sự là bao nhiêu?",
+      "ground_truth": "Tiêu chuẩn chiều cao cho thí sinh thi vào trường quân sự thường quy định khác nhau theo giới tính và ngành đào tạo. Nam thường yêu cầu chiều cao từ 163cm trở lên, nữ từ 158cm trở lên. Một số ngành đặc biệt có thể có yêu cầu khác. Tiêu chuẩn cụ thể được nêu trong thông báo tuyển sinh của từng trường.",
+      "keywords": ["chiều cao", "tiêu chuẩn sức khỏe", "nam nữ", "ngưỡng tối thiểu"]
+    },
+    {
+      "id": "rag_023",
+      "category": "dieu_kien",
+      "difficulty": "medium",
+      "requires_citation": true,
+      "question": "Thí sinh thi vào trường quân sự cần có điều kiện lý lịch như thế nào?",
+      "ground_truth": "Thí sinh thi vào trường quân sự cần có lý lịch rõ ràng, bản thân và gia đình không vi phạm pháp luật nghiêm trọng. Lý lịch tự khai phải được xác nhận của chính quyền địa phương (xã, phường, thị trấn) và cơ quan an ninh địa phương. Một số ngành nhạy cảm có thể yêu cầu thẩm tra lý lịch sâu hơn.",
+      "keywords": ["lý lịch", "chính trị", "xác nhận", "điều kiện"]
+    },
+    {
+      "id": "rag_024",
+      "category": "dieu_kien",
+      "difficulty": "hard",
+      "requires_citation": true,
+      "question": "Thí sinh có người thân định cư ở nước ngoài có được thi vào trường quân sự không?",
+      "ground_truth": "Thí sinh có người thân định cư ở nước ngoài cần được xét duyệt đặc biệt về lý lịch chính trị. Tùy theo quan hệ thân nhân và tình trạng cư trú, cơ quan an ninh sẽ có đánh giá riêng. Thí sinh trong diện này nên liên hệ trực tiếp với cơ quan tuyển sinh để được tư vấn cụ thể trước khi đăng ký.",
+      "keywords": ["người thân nước ngoài", "lý lịch chính trị", "xét duyệt"]
+    },
+    {
+      "id": "rag_025",
+      "category": "ho_so",
+      "difficulty": "medium",
+      "requires_citation": false,
+      "question": "Thời hạn nộp hồ sơ đăng ký dự tuyển vào trường quân sự là khi nào?",
+      "ground_truth": "Thời hạn nộp hồ sơ đăng ký dự tuyển vào trường quân sự thường sớm hơn so với tuyển sinh đại học dân sự do yêu cầu sơ tuyển tại địa phương. Thí sinh cần nộp hồ sơ cho Hội đồng tuyển sinh địa phương (thường là tháng 3-4) trước khi diễn ra kỳ thi THPT quốc gia. Mốc thời gian cụ thể được công bố trong thông báo tuyển sinh hàng năm.",
+      "keywords": ["thời hạn", "nộp hồ sơ", "sơ tuyển", "thời gian"]
+    },
+    {
+      "id": "rag_026",
+      "category": "ho_so",
+      "difficulty": "hard",
+      "requires_citation": false,
+      "question": "Giấy chứng nhận sức khỏe cho hồ sơ đăng ký quân sự phải do đơn vị nào cấp?",
+      "ground_truth": "Giấy chứng nhận sức khỏe cho hồ sơ dự tuyển quân sự phải do cơ sở y tế có thẩm quyền cấp, thường là bệnh viện quân y cấp huyện/tỉnh hoặc trung tâm y tế được Bộ Quốc phòng chỉ định. Kết quả khám sức khỏe tại bệnh viện dân sự thông thường không được chấp nhận. Thí sinh cần liên hệ cơ quan tuyển sinh địa phương để biết địa chỉ khám chính thức.",
+      "keywords": ["giấy chứng nhận sức khỏe", "bệnh viện quân y", "thẩm quyền", "cấp"]
+    },
+    {
+      "id": "rag_027",
+      "category": "the_luc",
+      "difficulty": "medium",
+      "requires_citation": true,
+      "question": "Nữ thí sinh thi vào trường quân sự cần đạt thành tích thể lực tối thiểu là bao nhiêu?",
+      "ground_truth": "Tiêu chuẩn thể lực cho nữ thí sinh thi vào trường quân sự thường thấp hơn so với nam nhưng vẫn yêu cầu ở mức khá. Thông thường bao gồm: chạy 100m không quá 15-16 giây, chạy 800m không quá 4-5 phút, có thể kết hợp các bài bơi hoặc thể dục thể hình. Tiêu chuẩn cụ thể theo từng ngành và trường.",
+      "keywords": ["thể lực nữ", "tiêu chuẩn", "chạy bộ", "bơi lội"]
+    },
+    {
+      "id": "rag_028",
+      "category": "quy_trinh",
+      "difficulty": "hard",
+      "requires_citation": true,
+      "question": "Sơ tuyển địa phương trong tuyển sinh quân sự bao gồm những bước nào?",
+      "ground_truth": "Sơ tuyển địa phương thường bao gồm các bước: xét duyệt hồ sơ và lý lịch, khám sức khỏe sơ bộ để sàng lọc các trường hợp không đủ điều kiện cơ bản, kiểm tra thể lực cơ bản, và thẩm tra chính trị. Kết quả sơ tuyển sẽ xác định thí sinh đủ điều kiện tham gia thi chính thức. Thí sinh đạt sơ tuyển mới được đăng ký dự thi.",
+      "keywords": ["sơ tuyển", "địa phương", "các bước", "lý lịch"]
+    },
+    {
+      "id": "rag_029",
+      "category": "uu_tien",
+      "difficulty": "hard",
+      "requires_citation": true,
+      "question": "Thí sinh dân tộc thiểu số ở vùng đặc biệt khó khăn được cộng tổng bao nhiêu điểm ưu tiên?",
+      "ground_truth": "Thí sinh dân tộc thiểu số ở vùng đặc biệt khó khăn (khu vực 1) được cộng điểm ưu tiên theo cả hai tiêu chí: đối tượng ưu tiên dân tộc thiểu số và khu vực ưu tiên. Tổng điểm ưu tiên phụ thuộc vào quy định của từng năm. Từ năm 2023, điểm ưu tiên được tính theo thang điểm trượt giảm dần để đảm bảo công bằng.",
+      "keywords": ["dân tộc thiểu số", "vùng đặc biệt khó khăn", "cộng điểm", "tổng điểm ưu tiên"]
+    },
+    {
+      "id": "rag_030",
+      "category": "dau_ra",
+      "difficulty": "medium",
+      "requires_citation": false,
+      "question": "Học viên tốt nghiệp Học viện Quân y được phân công về đơn vị nào?",
+      "ground_truth": "Học viên tốt nghiệp Học viện Quân y thường được phân công về các đơn vị quân y trong toàn quân như: bệnh viện quân y các cấp (từ cấp trung đoàn đến cấp quân khu), viện nghiên cứu y học quân sự, hoặc các phòng quân y của các đơn vị tác chiến. Vị trí phân công phụ thuộc vào ngành đào tạo và nhu cầu lực lượng.",
+      "keywords": ["Học viện Quân y", "phân công", "bệnh viện quân y", "đơn vị"]
+    },
+    {
+      "id": "rag_031",
+      "category": "khu_vuc",
+      "difficulty": "medium",
+      "requires_citation": true,
+      "question": "Thí sinh ở thành phố Hà Nội thuộc khu vực ưu tiên mấy?",
+      "ground_truth": "Thí sinh ở thành phố Hà Nội (khu vực thành thị) thường thuộc Khu vực 3, không được hưởng điểm ưu tiên khu vực. Tuy nhiên, một số huyện ngoại thành, vùng nông thôn của Hà Nội có thể thuộc Khu vực 2 nông thôn. Thí sinh cần xác nhận khu vực cụ thể theo địa chỉ thường trú để biết mình thuộc diện nào.",
+      "keywords": ["Hà Nội", "khu vực ưu tiên", "thành thị", "nông thôn"]
+    },
+    {
+      "id": "rag_032",
+      "category": "diem_chuan",
+      "difficulty": "medium",
+      "requires_citation": false,
+      "question": "Điểm chuẩn tuyển sinh quân sự có được công bố công khai không?",
+      "ground_truth": "Điểm chuẩn tuyển sinh của các trường quân sự được công bố chính thức sau kỳ thi, thường trên website của Bộ Quốc phòng, trang tuyển sinh của từng trường, và các phương tiện truyền thông chính thống. Tuy nhiên, một số trường quân sự có thể công bố muộn hơn so với trường dân sự do quy trình xét duyệt nội bộ.",
+      "keywords": ["điểm chuẩn", "công bố", "website", "Bộ Quốc phòng"]
     }
   ]
 }

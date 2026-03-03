@@ -12,31 +12,37 @@ from src.database.qdrant import get_qdrant_db
 
 logger = logging.getLogger(__name__)
 
+# Intent-adaptive RRF weights: [dense_weight, sparse_weight]
+INTENT_RRF_WEIGHTS = {
+    "specific":    [0.40, 0.60],  # BM25 cao hơn: exact match số Điều, tên trường
+    "comparison":  [0.65, 0.35],  # Dense cao hơn: semantic similarity
+    "list":        [0.50, 0.50],  # Balanced
+    "explanation": [0.70, 0.30],  # Dense cao hơn: conceptual understanding
+    "general":     [0.60, 0.40],  # Default (from settings)
+}
+
 
 # --- Answer Prompt (ported from backend_v2) ---
 
-ANSWER_PROMPT = """Bạn là trợ lý tư vấn tuyển sinh quân sự Việt Nam. Trả lời câu hỏi DỰA TRÊN ngữ cảnh pháp lý bên dưới.
+ANSWER_PROMPT = """Bạn là trợ lý tư vấn tuyển sinh quân sự. Trả lời DỰA TRÊN ngữ cảnh bên dưới, không dùng kiến thức ngoài.
 
-## Ngữ cảnh pháp lý:
+## Ngữ cảnh:
 {context}
 
 ## Câu hỏi:
 {question}
 
-## QUY TẮC BẮT BUỘC:
-1. **CHỈ dùng thông tin từ ngữ cảnh** - KHÔNG thêm kiến thức bên ngoài
-2. **Trích dẫn chính xác**: "Theo Điều X, Khoản Y..." hoặc "Căn cứ Chương Z, Mục W..."
-3. **KHÔNG dùng** "tài liệu 1/2/3", "nguồn 1/2/3" - dùng tên Điều/Khoản/Chương cụ thể
-4. **KHÔNG tự suy luận ngược** với nội dung đã trích dẫn. Nếu văn bản ghi rõ "giải nhất, nhì, ba" thì CẢ BA đều đủ điều kiện
-5. **Phân biệt rõ** các khái niệm khác nhau: "tuyển thẳng" khác "ưu tiên xét tuyển" khác "cộng điểm"
-6. Nếu không tìm thấy thông tin → nói rõ không có trong văn bản
+## Yêu cầu:
+- Trích dẫn: "Theo Điều X, Khoản Y..." — không dùng "tài liệu 1/2/3"
+- Nếu có quy định riêng cho đối tượng được hỏi (khu vực, giới tính, dân tộc...) → ưu tiên quy định riêng, không dùng quy định chung
+- "từ X trở lên" = ≥ X (giá trị lớn hơn X cũng đủ điều kiện)
+- Không có thông tin → nói rõ và khuyên liên hệ cơ quan tuyển sinh có thẩm quyền
 
-## Hướng dẫn format:
-- Trả lời bằng tiếng Việt, rõ ràng
-- Dùng **bold** cho thông tin quan trọng
-- Dùng heading (###) phân chia phần
-- Dùng bullet points (-) cho danh sách
-- Cấu trúc: Trả lời trực tiếp → Trích dẫn chi tiết → Điều kiện/Yêu cầu → Lưu ý
+## Format (Markdown):
+- **In đậm** con số, điều kiện, thời hạn quan trọng
+- Dùng `###` chia phần nếu trả lời gồm nhiều nội dung khác nhau (phải có dòng trống trước và sau `###`)
+- Dùng `-` cho danh sách; trả lời thẳng vào câu hỏi trước, trích dẫn/chi tiết sau
+- Khi trích dẫn nguyên văn từ văn bản quy định, dùng blockquote: `> "nội dung trích nguyên văn..."` (dòng trống trước và sau `>`)
 
 {intent_instruction}
 
@@ -44,11 +50,11 @@ ANSWER_PROMPT = """Bạn là trợ lý tư vấn tuyển sinh quân sự Việt 
 
 # Intent-specific instructions
 INTENT_INSTRUCTIONS = {
-    "specific": "Ưu tiên trả lời ngắn gọn, chính xác, trích dẫn đúng Điều/Khoản liên quan.",
-    "comparison": "So sánh rõ ràng các điểm giống và khác nhau, sử dụng bảng nếu phù hợp.",
-    "list": "Liệt kê đầy đủ tất cả các mục, sử dụng danh sách có đánh số.",
-    "explanation": "Giải thích chi tiết quy trình/thủ tục, theo thứ tự các bước.",
-    "general": "Trả lời tổng quan, bao quát các khía cạnh liên quan.",
+    "specific": "Trả lời ngắn gọn, chính xác. Trích dẫn đúng Điều/Khoản.",
+    "comparison": "So sánh rõ điểm giống và khác, dùng bảng nếu phù hợp.",
+    "list": "Liệt kê đầy đủ, đánh số thứ tự.",
+    "explanation": "Giải thích theo thứ tự các bước.",
+    "general": "Trả lời tổng quan các khía cạnh liên quan.",
 }
 
 # LLM Reranking prompt
@@ -180,7 +186,7 @@ class RAGAgent:
 
         # Step 4: Hybrid Search (Qdrant + BM25 + RRF)
         self._ensure_bm25()
-        candidates = await self._hybrid_search(search_queries, query_embedding)
+        candidates = await self._hybrid_search(search_queries, query_embedding, intent=intent)
         logger.info(f"[RAG] Step 4: Hybrid search returned {len(candidates)} candidates")
 
         if not candidates:
@@ -191,11 +197,19 @@ class RAGAgent:
         candidates = deduplicate_chunks(candidates)
         logger.info(f"[RAG] Step 5: After dedup: {len(candidates)} chunks")
 
-        # Step 5.5: Sibling Enrichment
+        # Step 5.5: Sibling Enrichment (intent-aware)
         if settings.use_smart_retrieval:
             from src.agents.components.hierarchy import enrich_with_all_siblings
-            candidates = enrich_with_all_siblings(candidates, query, query_embedding)
+            candidates = enrich_with_all_siblings(candidates, query, query_embedding, intent=intent)
             logger.info(f"[RAG] Step 5.5: After sibling enrichment: {len(candidates)} chunks")
+
+        # Step 5.6: Parent Promotion (chỉ cho "list" intent)
+        # diem chunks → khoan cha → build_enriched_context enumerate all a/b/c/d/đ
+        # KHÔNG áp dụng cho "specific" intent (tránh lẫn quy định riêng biệt)
+        if intent == "list" and settings.use_smart_retrieval:
+            from src.agents.components.hierarchy import promote_diem_to_parent
+            candidates = promote_diem_to_parent(candidates)
+            logger.info(f"[RAG] Step 5.6: After parent promotion: {len(candidates)} chunks")
 
         # Step 6: Reranking
         if self.reranker and len(candidates) > 1:
@@ -204,6 +218,7 @@ class RAGAgent:
                 chunks=candidates,
                 top_k=settings.reranker_top_k * 2,
                 use_ensemble=settings.reranker_ensemble,
+                intent=intent,
             )
         else:
             # Fallback: LLM reranking or simple score sort
@@ -248,12 +263,14 @@ class RAGAgent:
         self,
         queries: List[str],
         query_embedding: np.ndarray,
+        intent: str = "general",
     ) -> List[Dict]:
         """Execute hybrid search: Qdrant dense + BM25 sparse + RRF fusion.
 
         Args:
             queries: List of query variations.
             query_embedding: Embedding of the original query.
+            intent: Detected query intent for adaptive RRF weights.
 
         Returns:
             Fused list of candidate chunks.
@@ -316,7 +333,8 @@ class RAGAgent:
 
             bm25_for_rrf = all_bm25_results
 
-            fused = reciprocal_rank_fusion([dense_for_rrf, bm25_for_rrf])
+            rrf_weights = INTENT_RRF_WEIGHTS.get(intent, INTENT_RRF_WEIGHTS["general"])
+            fused = reciprocal_rank_fusion([dense_for_rrf, bm25_for_rrf], weights=rrf_weights)
 
             # Convert back to chunks
             candidates = []

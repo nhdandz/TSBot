@@ -210,6 +210,32 @@ export const adminService = {
     )
   },
 
+  async reindexDocuments(): Promise<{
+    success: boolean
+    message: string
+    total_chunks: number
+    chunks_json_saved: boolean
+    files_processed: Array<{ file: string; chunks: number }>
+  }> {
+    return apiClient.post(
+      '/api/v1/admin/documents/reindex',
+      {},
+      { headers: withAuth() }
+    )
+  },
+
+  async loadChunksJson(): Promise<{
+    success: boolean
+    message: string
+    total_chunks: number
+  }> {
+    return apiClient.post(
+      '/api/v1/admin/documents/load-json',
+      {},
+      { headers: withAuth() }
+    )
+  },
+
   // Analytics
   async getAnalyticsTrend(params: {
     truong?: string
