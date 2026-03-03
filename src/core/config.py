@@ -75,17 +75,23 @@ class Settings(BaseSettings):
     qdrant_sql_examples_collection: str = "sql_examples"
     qdrant_intents_collection: str = "intents"
 
-    # Ollama
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_main_model: str = "qwen2.5:7b-instruct"
-    ollama_main_temperature: float = 0.1
-    ollama_main_top_p: float = 0.9
-    ollama_grader_model: str = "qwen2.5:1.5b"
-    ollama_grader_temperature: float = 0.0
+    # vLLM (OpenAI-compatible inference server trên máy A100)
+    vllm_base_url: str = "http://localhost:8001/v1"
+    vllm_main_model: str = "Qwen/Qwen2.5-7B-Instruct"
+    vllm_main_temperature: float = 0.1
+    vllm_main_top_p: float = 0.9
+    vllm_grader_model: str = "Qwen/Qwen2.5-1.5B-Instruct"
+    vllm_grader_temperature: float = 0.0
+    vllm_api_key: str = "EMPTY"  # vLLM không cần real API key
 
-    # Embeddings (Ollama)
-    embedding_model: str = "bge-m3"
+    # Embeddings (sentence-transformers chạy local trên máy application)
+    embedding_model: str = "BAAI/bge-m3"
     embedding_dimension: int = 1024
+    embedding_device: str = "auto"  # "cuda", "cpu", hoặc "auto" (tự detect GPU)
+
+    # Redis (optional - dùng cho persistent semantic cache)
+    redis_url: str = "redis://localhost:6379"
+    use_redis_cache: bool = False  # bật khi có Redis
 
     # RAG
     rag_chunk_size: int = 800
@@ -158,12 +164,12 @@ class Settings(BaseSettings):
     router_similarity_threshold: float = 0.85
     router_faq_collection: str = "intents"
 
-    # Authentication
-    secret_key: str = "your-super-secret-key-change-in-production"
+    # Authentication — PHẢI đặt qua .env trong production!
+    secret_key: str = "CHANGE_THIS_IN_PRODUCTION_USE_OPENSSL_RAND_BASE64_32"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     admin_username: str = "admin"
-    admin_password: str = "admin123"
+    admin_password: str = "CHANGE_THIS_IN_PRODUCTION"
 
     # Paths
     data_dir: Path = Path("./data")
@@ -192,11 +198,12 @@ class EvalSettings(BaseSettings):
     eval_results_dir: str = "data/evaluation/results"
 
     # Models
-    eval_judge_model: str = "qwen2.5:7b-instruct"
-    eval_embedding_model: str = "bge-m3"
+    eval_judge_model: str = "Qwen/Qwen2.5-7B-Instruct"
+    eval_embedding_model: str = "BAAI/bge-m3"
 
-    # Ollama (inherit from main settings)
-    ollama_base_url: str = "http://localhost:11434"
+    # vLLM (dùng cùng server với main app)
+    vllm_base_url: str = "http://localhost:8001/v1"
+    vllm_api_key: str = "EMPTY"
 
     # Execution
     eval_batch_size: int = 5

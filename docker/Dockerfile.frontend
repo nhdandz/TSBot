@@ -1,0 +1,43 @@
+# =============================================================================
+# TSBot Frontend — Multi-stage build
+# Stage 1: Build React app
+# Stage 2: Serve với Nginx
+# =============================================================================
+
+# ── Stage 1: Build ───────────────────────────────────────────────────────────
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files trước để tận dụng Docker layer cache
+COPY frontend/package*.json ./
+
+# Install dependencies
+RUN npm ci --prefer-offline
+
+# Copy source code
+COPY frontend/ .
+
+# Build production bundle
+# Vite sẽ output vào /app/dist
+RUN npm run build
+
+
+# ── Stage 2: Serve với Nginx ─────────────────────────────────────────────────
+FROM nginx:alpine AS runtime
+
+# Copy built files
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Copy nginx config
+COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+
+# Xóa default nginx config
+RUN rm -f /etc/nginx/conf.d/default.conf.default
+
+EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD wget -q -O /dev/null http://localhost:80/ || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]

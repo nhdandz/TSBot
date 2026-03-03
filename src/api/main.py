@@ -4,9 +4,12 @@ import logging
 from contextlib import asynccontextmanager
 
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
+from src.api._limiter import limiter
 from src.api.admin import router as admin_router
 from src.api.analytics import router as analytics_router
 from src.api.chat import router as chat_router
@@ -33,18 +36,26 @@ structlog.configure(
 
 logger = structlog.get_logger()
 
+# Rate limiter — dùng IP làm key
+limiter = Limiter(key_func=get_remote_address)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
-    # Startup
     logger.info("Starting TSBot application", env=settings.app_env)
 
-    # Initialize database connections
+    # Validate credentials chưa đổi trong production
+    if settings.is_production:
+        if "CHANGE_THIS" in settings.secret_key or "CHANGE_THIS" in settings.admin_password:
+            raise RuntimeError(
+                "FATAL: SECRET_KEY và ADMIN_PASSWORD chưa được đổi trong .env production!"
+            )
+
+    # Khởi tạo database connections
     db = get_postgres_db()
     qdrant = get_qdrant_db()
 
-    # Check database connections and create tables
     if await db.health_check():
         logger.info("PostgreSQL connection established")
         await db.create_tables()
@@ -53,7 +64,6 @@ async def lifespan(app: FastAPI):
 
     if await qdrant.health_check():
         logger.info("Qdrant connection established")
-        # Create required collections if they don't exist
         collections_to_create = [
             settings.qdrant_legal_collection,
             settings.qdrant_sql_examples_collection,
@@ -69,7 +79,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Qdrant connection failed - vector search will be unavailable")
 
-    # Initialize semantic router
+    # Khởi tạo semantic router
     from src.routers.semantic_router import get_semantic_router
     router = get_semantic_router()
     try:
@@ -78,7 +88,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Semantic router initialization failed", error=str(e))
 
-    # Auto-load chunks from JSON for advanced RAG pipeline
+    # Auto-load chunks
     from src.agents.components.vector_store import auto_load_chunks
     try:
         await auto_load_chunks()
@@ -87,13 +97,12 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown
     logger.info("Shutting down TSBot application")
     await db.close()
     await qdrant.close()
 
 
-# Create FastAPI app
+# Tạo FastAPI app
 app = FastAPI(
     title="TSBot API",
     description="Chatbot AI Tư Vấn Tuyển Sinh Quân Sự Việt Nam",
@@ -103,30 +112,48 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configure CORS
+# Rate limiter — import từ _limiter.py để tránh circular import với routers
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS — chỉ cho phép methods cần thiết
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
+
+
+# Security headers middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    if settings.is_production:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 
 # Health check endpoint
 @app.get("/health", tags=["Health"])
 async def health_check():
-    """Check application health status."""
+    """Kiểm tra trạng thái các services."""
     db = get_postgres_db()
     qdrant = get_qdrant_db()
 
     postgres_ok = await db.health_check()
     qdrant_ok = await qdrant.health_check()
 
-    # Check LLM
     from src.core.llm import get_llm_service
     llm = get_llm_service()
     llm_status = await llm.health_check()
+
+    from src.core.embeddings import get_embedding_service
+    embed_ok = get_embedding_service().health_check()
 
     status = "healthy" if postgres_ok and qdrant_ok else "degraded"
 
@@ -135,9 +162,10 @@ async def health_check():
         "services": {
             "postgres": "up" if postgres_ok else "down",
             "qdrant": "up" if qdrant_ok else "down",
-            "ollama": "up" if llm_status.get("ollama_server") else "down",
+            "vllm_server": "up" if llm_status.get("vllm_server") else "down",
             "main_model": "ready" if llm_status.get("main_model") else "not_loaded",
             "grader_model": "ready" if llm_status.get("grader_model") else "not_loaded",
+            "embeddings": "up" if embed_ok else "down",
         },
     }
 
@@ -145,7 +173,6 @@ async def health_check():
 # Root endpoint
 @app.get("/", tags=["Root"])
 async def root():
-    """Root endpoint with API information."""
     return {
         "name": settings.app_name,
         "version": "0.1.0",
@@ -161,7 +188,7 @@ app.include_router(analytics_router, prefix="/api/v1/analytics", tags=["Analytic
 
 
 def run():
-    """Run the application with uvicorn."""
+    """Chạy application với uvicorn."""
     import uvicorn
 
     uvicorn.run(

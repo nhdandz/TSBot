@@ -1,9 +1,13 @@
-"""Embedding service using Ollama for TSBot."""
+"""Embedding service dùng sentence-transformers chạy local trên GPU.
 
+Model bge-m3 được load trực tiếp vào máy application (16GB GPU).
+Không cần Ollama cho embeddings.
+"""
+
+import asyncio
 import logging
 from typing import Optional
 
-import httpx
 import numpy as np
 
 from src.core.config import settings
@@ -12,72 +16,38 @@ logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
-    """Embedding service using Ollama API."""
+    """Embedding service dùng sentence-transformers với GPU acceleration."""
 
     def __init__(
         self,
         model_name: Optional[str] = None,
-        ollama_base_url: Optional[str] = None,
+        device: Optional[str] = None,
     ):
-        """Initialize embedding service.
+        """Khởi tạo embedding service.
 
         Args:
-            model_name: Ollama embedding model name.
-            ollama_base_url: Ollama API base URL.
+            model_name: HuggingFace model name (mặc định BAAI/bge-m3).
+            device: "cuda", "cpu", hoặc "auto" (tự detect).
         """
+        from sentence_transformers import SentenceTransformer
+
         self.model_name = model_name or settings.embedding_model
-        self.ollama_base_url = ollama_base_url or settings.ollama_base_url
-        self._dimension: Optional[int] = None
+        resolved_device = device or settings.embedding_device
+
+        if resolved_device == "auto":
+            import torch
+            resolved_device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        self.device = resolved_device
+
+        logger.info(f"Loading embedding model '{self.model_name}' on device '{self.device}'")
+        self._model = SentenceTransformer(self.model_name, device=self.device)
+        logger.info(f"Embedding model loaded. Dimension: {self._model.get_sentence_embedding_dimension()}")
 
     @property
     def dimension(self) -> int:
-        """Get embedding dimension."""
-        if self._dimension is None:
-            test_embedding = self.encode("test")
-            self._dimension = test_embedding.shape[-1]
-        return self._dimension
-
-    def _call_ollama_embed(self, texts: list[str]) -> list[list[float]]:
-        """Call Ollama embed API synchronously.
-
-        Args:
-            texts: List of texts to embed.
-
-        Returns:
-            List of embedding vectors.
-        """
-        url = f"{self.ollama_base_url}/api/embed"
-        payload = {
-            "model": self.model_name,
-            "input": texts,
-        }
-
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(url, json=payload)
-            response.raise_for_status()
-            data = response.json()
-            return data["embeddings"]
-
-    async def _async_call_ollama_embed(self, texts: list[str]) -> list[list[float]]:
-        """Call Ollama embed API asynchronously.
-
-        Args:
-            texts: List of texts to embed.
-
-        Returns:
-            List of embedding vectors.
-        """
-        url = f"{self.ollama_base_url}/api/embed"
-        payload = {
-            "model": self.model_name,
-            "input": texts,
-        }
-
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(url, json=payload)
-            response.raise_for_status()
-            data = response.json()
-            return data["embeddings"]
+        """Dimension của embedding vectors."""
+        return self._model.get_sentence_embedding_dimension()
 
     def encode(
         self,
@@ -86,34 +56,30 @@ class EmbeddingService:
         batch_size: int = 32,
         show_progress: bool = False,
     ) -> np.ndarray:
-        """Encode texts to embeddings.
+        """Encode texts thành embedding vectors (synchronous).
 
         Args:
-            texts: Single text or list of texts.
-            normalize: Normalize embeddings to unit length.
-            batch_size: Batch size for encoding.
-            show_progress: Show progress bar (unused, kept for compatibility).
+            texts: Single text hoặc list of texts.
+            normalize: Normalize về unit length.
+            batch_size: Batch size khi encode nhiều texts.
+            show_progress: Hiện progress bar.
 
         Returns:
-            Numpy array of embeddings.
+            numpy array shape (N, dimension) hoặc (dimension,) nếu single text.
         """
-        if isinstance(texts, str):
+        single = isinstance(texts, str)
+        if single:
             texts = [texts]
 
-        all_embeddings = []
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i : i + batch_size]
-            embeddings = self._call_ollama_embed(batch)
-            all_embeddings.extend(embeddings)
+        embeddings = self._model.encode(
+            texts,
+            normalize_embeddings=normalize,
+            batch_size=batch_size,
+            show_progress_bar=show_progress,
+            convert_to_numpy=True,
+        )
 
-        result = np.array(all_embeddings, dtype=np.float32)
-
-        if normalize:
-            norms = np.linalg.norm(result, axis=1, keepdims=True)
-            norms = np.where(norms == 0, 1, norms)
-            result = result / norms
-
-        return result
+        return embeddings
 
     async def aencode(
         self,
@@ -121,44 +87,27 @@ class EmbeddingService:
         normalize: bool = True,
         batch_size: int = 32,
     ) -> np.ndarray:
-        """Async encode texts to embeddings.
+        """Async encode texts — chạy trong thread executor để không block event loop.
 
         Args:
-            texts: Single text or list of texts.
-            normalize: Normalize embeddings.
+            texts: Single text hoặc list of texts.
+            normalize: Normalize về unit length.
             batch_size: Batch size.
 
         Returns:
-            Numpy array of embeddings.
+            numpy array of embeddings.
         """
-        if isinstance(texts, str):
-            texts = [texts]
-
-        all_embeddings = []
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i : i + batch_size]
-            embeddings = await self._async_call_ollama_embed(batch)
-            all_embeddings.extend(embeddings)
-
-        result = np.array(all_embeddings, dtype=np.float32)
-
-        if normalize:
-            norms = np.linalg.norm(result, axis=1, keepdims=True)
-            norms = np.where(norms == 0, 1, norms)
-            result = result / norms
-
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: self.encode(texts, normalize=normalize, batch_size=batch_size),
+        )
         return result
 
     def encode_query(self, query: str) -> np.ndarray:
-        """Encode a query for retrieval.
-
-        Args:
-            query: Query text.
-
-        Returns:
-            Query embedding.
-        """
-        return self.encode(query)[0]
+        """Encode single query string. Trả về 1D array (dimension,)."""
+        result = self.encode(query)
+        return result[0]
 
     def encode_documents(
         self,
@@ -166,79 +115,54 @@ class EmbeddingService:
         batch_size: int = 32,
         show_progress: bool = False,
     ) -> np.ndarray:
-        """Encode documents for indexing.
-
-        Args:
-            documents: List of document texts.
-            batch_size: Batch size.
-            show_progress: Show progress (unused, kept for compatibility).
-
-        Returns:
-            Document embeddings.
-        """
-        return self.encode(
-            documents,
-            batch_size=batch_size,
-        )
+        """Encode nhiều documents. Trả về 2D array (N, dimension)."""
+        return self.encode(documents, batch_size=batch_size, show_progress=show_progress)
 
     def similarity(
         self,
         query_embedding: np.ndarray,
         document_embeddings: np.ndarray,
     ) -> np.ndarray:
-        """Compute cosine similarity between query and documents.
+        """Tính cosine similarity giữa query và documents.
 
         Args:
-            query_embedding: Single query embedding.
-            document_embeddings: Array of document embeddings.
+            query_embedding: 1D hoặc 2D array.
+            document_embeddings: 2D array (N, dimension).
 
         Returns:
-            Similarity scores.
+            Similarity scores 1D array.
         """
         if query_embedding.ndim == 1:
             query_embedding = query_embedding.reshape(1, -1)
         if document_embeddings.ndim == 1:
             document_embeddings = document_embeddings.reshape(1, -1)
 
-        similarities = np.dot(document_embeddings, query_embedding.T).flatten()
-        return similarities
+        return np.dot(document_embeddings, query_embedding.T).flatten()
 
     def get_model_info(self) -> dict:
-        """Get information about the loaded model.
-
-        Returns:
-            Model information dictionary.
-        """
+        """Thông tin về model đang dùng."""
         return {
             "model_name": self.model_name,
-            "ollama_base_url": self.ollama_base_url,
+            "device": self.device,
             "dimension": self.dimension,
         }
 
     def health_check(self) -> bool:
-        """Check if embedding service is working.
-
-        Returns:
-            True if working.
-        """
+        """Kiểm tra embedding service hoạt động bình thường."""
         try:
-            test_embedding = self.encode("Kiểm tra embedding tiếng Việt")
-            return len(test_embedding) > 0 and test_embedding.shape[-1] > 0
+            test = self.encode("Kiểm tra embedding tiếng Việt")
+            return test.shape[-1] == self.dimension
         except Exception as e:
             logger.error(f"Embedding health check failed: {e}")
             return False
 
 
-# Global instance
+# Global instance — load model 1 lần duy nhất khi khởi động
 _embedding_instance: Optional[EmbeddingService] = None
 
 
 def get_embedding_service() -> EmbeddingService:
-    """Get global embedding service instance.
-
-    Returns:
-        EmbeddingService instance.
-    """
+    """Lấy global embedding service instance."""
     global _embedding_instance
     if _embedding_instance is None:
         _embedding_instance = EmbeddingService()

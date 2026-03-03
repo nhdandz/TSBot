@@ -104,8 +104,11 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
-# Environments
+# Environment files — KHÔNG commit secrets lên git!
 .env
+.env.*
+!.env.example
+!.env.production.example
 .venv
 env/
 venv/
@@ -165,7 +168,7 @@ data/intents/*.json
 logs/
 *.log
 
-# Local development
+# Local development (các rule này đã cover bởi .env.* ở trên, giữ để rõ ràng)
 .env.local
 .env.*.local
 

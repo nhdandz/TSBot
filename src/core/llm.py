@@ -1,10 +1,14 @@
-"""Ollama LLM wrapper for TSBot."""
+"""vLLM LLM service wrapper cho TSBot.
+
+vLLM chạy trên máy A100, expose OpenAI-compatible API.
+Dùng ChatOpenAI từ langchain-openai để giao tiếp.
+"""
 
 import logging
 from typing import Any, AsyncGenerator, Optional
 
 import httpx
-from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.core.config import settings
@@ -13,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class LLMService:
-    """Ollama LLM service wrapper with support for multiple models."""
+    """vLLM service wrapper với OpenAI-compatible API."""
 
     def __init__(
         self,
@@ -21,40 +25,43 @@ class LLMService:
         main_model: Optional[str] = None,
         grader_model: Optional[str] = None,
     ):
-        """Initialize LLM service.
+        self.base_url = base_url or settings.vllm_base_url
+        self.main_model = main_model or settings.vllm_main_model
+        self.grader_model = grader_model or settings.vllm_grader_model
 
-        Args:
-            base_url: Ollama server URL.
-            main_model: Main generation model.
-            grader_model: Grader/evaluation model.
-        """
-        self.base_url = base_url or settings.ollama_base_url
-        self.main_model = main_model or settings.ollama_main_model
-        self.grader_model = grader_model or settings.ollama_grader_model
+        self._main_llm: Optional[ChatOpenAI] = None
+        self._grader_llm: Optional[ChatOpenAI] = None
 
-        self._main_llm: Optional[ChatOllama] = None
-        self._grader_llm: Optional[ChatOllama] = None
+    def _make_llm(self, model: str, temperature: float, top_p: Optional[float] = None) -> ChatOpenAI:
+        """Tạo ChatOpenAI instance trỏ vào vLLM server."""
+        kwargs: dict[str, Any] = {
+            "base_url": self.base_url,
+            "api_key": settings.vllm_api_key,
+            "model": model,
+            "temperature": temperature,
+        }
+        if top_p is not None:
+            kwargs["model_kwargs"] = {"top_p": top_p}
+        return ChatOpenAI(**kwargs)
 
     @property
-    def main_llm(self) -> ChatOllama:
-        """Get main LLM for generation tasks."""
+    def main_llm(self) -> ChatOpenAI:
+        """LLM chính cho generation tasks."""
         if self._main_llm is None:
-            self._main_llm = ChatOllama(
-                base_url=self.base_url,
+            self._main_llm = self._make_llm(
                 model=self.main_model,
-                temperature=settings.ollama_main_temperature,
-                top_p=settings.ollama_main_top_p,
+                temperature=settings.vllm_main_temperature,
+                top_p=settings.vllm_main_top_p,
             )
         return self._main_llm
 
     @property
-    def grader_llm(self) -> ChatOllama:
-        """Get grader LLM for evaluation tasks (smaller, faster)."""
+    def grader_llm(self) -> ChatOpenAI:
+        """LLM nhỏ hơn cho grading/evaluation tasks."""
         if self._grader_llm is None:
-            self._grader_llm = ChatOllama(
-                base_url=self.base_url,
+            self._grader_llm = self._make_llm(
                 model=self.grader_model,
-                temperature=settings.ollama_grader_temperature,
+                temperature=settings.vllm_grader_temperature,
             )
         return self._grader_llm
 
@@ -63,22 +70,11 @@ class LLMService:
         model: Optional[str] = None,
         temperature: float = 0.1,
         **kwargs: Any,
-    ) -> ChatOllama:
-        """Get a custom configured LLM instance.
-
-        Args:
-            model: Model name (defaults to main model).
-            temperature: Generation temperature.
-            **kwargs: Additional LLM parameters.
-
-        Returns:
-            Configured ChatOllama instance.
-        """
-        return ChatOllama(
-            base_url=self.base_url,
+    ) -> ChatOpenAI:
+        """Tạo custom LLM instance."""
+        return self._make_llm(
             model=model or self.main_model,
             temperature=temperature,
-            **kwargs,
         )
 
     @retry(
@@ -92,17 +88,7 @@ class LLMService:
         use_grader: bool = False,
         **kwargs: Any,
     ) -> str:
-        """Generate a response from the LLM.
-
-        Args:
-            prompt: User prompt.
-            system_prompt: Optional system prompt.
-            use_grader: Use grader model instead of main.
-            **kwargs: Additional generation parameters.
-
-        Returns:
-            Generated text response.
-        """
+        """Gọi LLM và trả về text response."""
         import re
 
         llm = self.grader_llm if use_grader else self.main_llm
@@ -115,12 +101,11 @@ class LLMService:
         response = await llm.ainvoke(messages, **kwargs)
         content = response.content
 
-        # Remove thinking tags (qwen3, deepseek-r1, and other reasoning models)
+        # Loại bỏ thinking tags (qwen3, deepseek-r1 và các reasoning models)
         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL | re.IGNORECASE)
         content = re.sub(r"<thinking>.*?</thinking>", "", content, flags=re.DOTALL | re.IGNORECASE)
-        content = content.strip()
 
-        return content
+        return content.strip()
 
     async def generate_stream(
         self,
@@ -129,17 +114,7 @@ class LLMService:
         use_grader: bool = False,
         **kwargs: Any,
     ) -> AsyncGenerator[str, None]:
-        """Stream generate responses from the LLM.
-
-        Args:
-            prompt: User prompt.
-            system_prompt: Optional system prompt.
-            use_grader: Use grader model.
-            **kwargs: Additional parameters.
-
-        Yields:
-            Text chunks as they're generated.
-        """
+        """Stream generate responses từ LLM."""
         llm = self.grader_llm if use_grader else self.main_llm
 
         messages = []
@@ -148,7 +123,7 @@ class LLMService:
         messages.append(("human", prompt))
 
         async for chunk in llm.astream(messages, **kwargs):
-            if hasattr(chunk, "content"):
+            if hasattr(chunk, "content") and chunk.content:
                 yield chunk.content
 
     async def generate_with_json(
@@ -157,16 +132,7 @@ class LLMService:
         system_prompt: Optional[str] = None,
         use_grader: bool = False,
     ) -> dict:
-        """Generate JSON response from LLM.
-
-        Args:
-            prompt: User prompt.
-            system_prompt: Optional system prompt.
-            use_grader: Use grader model.
-
-        Returns:
-            Parsed JSON response.
-        """
+        """Gọi LLM và parse JSON từ response."""
         import json
         import re
 
@@ -178,14 +144,13 @@ class LLMService:
             use_grader=use_grader,
         )
 
-        # Try to extract JSON from response
         response = response.strip()
 
-        # Remove thinking tags (qwen3, deepseek-r1 models)
+        # Loại bỏ thinking tags
         response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
         response = response.strip()
 
-        # Handle markdown code blocks
+        # Xử lý markdown code blocks
         if response.startswith("```json"):
             response = response[7:]
         if response.startswith("```"):
@@ -193,7 +158,6 @@ class LLMService:
         if response.endswith("```"):
             response = response[:-3]
 
-        # Try to find JSON object in response
         response = response.strip()
         json_match = re.search(r"\{.*\}", response, re.DOTALL)
         if json_match:
@@ -202,61 +166,66 @@ class LLMService:
         return json.loads(response.strip())
 
     async def health_check(self) -> dict[str, bool]:
-        """Check if Ollama is running and models are available.
+        """Kiểm tra kết nối tới vLLM server.
 
-        Returns:
-            Dict with model availability status.
+        vLLM expose:
+          - GET /health → {"status": "healthy"}
+          - GET /v1/models → danh sách models
         """
         results = {
-            "ollama_server": False,
+            "vllm_server": False,
             "main_model": False,
             "grader_model": False,
         }
 
+        # base_url dạng "http://host:8001/v1" → server_url = "http://host:8001"
+        server_url = self.base_url.rstrip("/").removesuffix("/v1")
+
         try:
-            async with httpx.AsyncClient() as client:
-                # Check server
-                response = await client.get(f"{self.base_url}/api/tags", timeout=5.0)
-                if response.status_code == 200:
-                    results["ollama_server"] = True
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                # Kiểm tra /health endpoint
+                health_resp = await client.get(f"{server_url}/health")
+                if health_resp.status_code == 200:
+                    results["vllm_server"] = True
 
-                    # Check models
-                    data = response.json()
-                    available_models = [m["name"] for m in data.get("models", [])]
+                # Lấy danh sách models đang serve
+                models_resp = await client.get(
+                    f"{self.base_url}/models",
+                    headers={"Authorization": f"Bearer {settings.vllm_api_key}"},
+                )
+                if models_resp.status_code == 200:
+                    data = models_resp.json()
+                    available = [m["id"] for m in data.get("data", [])]
 
-                    # Check main model (handle version suffixes)
-                    main_base = self.main_model.split(":")[0]
-                    for model in available_models:
-                        if model.startswith(main_base):
+                    # So sánh tên model (có thể là tên ngắn hoặc full path)
+                    main_base = self.main_model.split("/")[-1].lower()
+                    grader_base = self.grader_model.split("/")[-1].lower()
+
+                    for model_id in available:
+                        model_lower = model_id.lower()
+                        if main_base in model_lower or model_lower in main_base:
                             results["main_model"] = True
-                            break
-
-                    # Check grader model
-                    grader_base = self.grader_model.split(":")[0]
-                    for model in available_models:
-                        if model.startswith(grader_base):
+                        if grader_base in model_lower or model_lower in grader_base:
                             results["grader_model"] = True
-                            break
 
         except Exception as e:
-            logger.error(f"LLM health check failed: {e}")
+            logger.error(f"vLLM health check failed: {e}")
 
         return results
 
     async def list_models(self) -> list[str]:
-        """List available models in Ollama.
-
-        Returns:
-            List of model names.
-        """
+        """Liệt kê models đang available trên vLLM server."""
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(f"{self.base_url}/api/tags", timeout=5.0)
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(
+                    f"{self.base_url}/models",
+                    headers={"Authorization": f"Bearer {settings.vllm_api_key}"},
+                )
                 if response.status_code == 200:
                     data = response.json()
-                    return [m["name"] for m in data.get("models", [])]
+                    return [m["id"] for m in data.get("data", [])]
         except Exception as e:
-            logger.error(f"Failed to list models: {e}")
+            logger.error(f"Failed to list vLLM models: {e}")
         return []
 
 
@@ -265,11 +234,7 @@ _llm_instance: Optional[LLMService] = None
 
 
 def get_llm_service() -> LLMService:
-    """Get global LLM service instance.
-
-    Returns:
-        LLMService instance.
-    """
+    """Lấy global LLM service instance."""
     global _llm_instance
     if _llm_instance is None:
         _llm_instance = LLMService()

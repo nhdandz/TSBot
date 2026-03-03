@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 import pandas as pd
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials, OAuth2PasswordBearer
 import bcrypt
 from jose import JWTError, jwt
@@ -17,6 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import settings
 from src.database.models import DiemChuan, KhoiThi, Nganh, Truong, User
 from src.database.postgres import get_db_session
+
+from src.api._limiter import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -140,9 +142,11 @@ async def get_current_user(
     return user
 
 
-# Login endpoint
+# Login endpoint — giới hạn 5 lần/phút để chống brute force
 @router.post("/login", response_model=Token)
+@limiter.limit("5/minute")
 async def login(
+    http_request: Request,
     credentials: UserLogin,
     session: AsyncSession = Depends(get_db_session),
 ) -> Token:

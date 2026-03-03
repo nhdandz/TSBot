@@ -240,7 +240,7 @@ class RAGEvaluator:
             config={
                 "judge_model": self.config.eval_judge_model,
                 "embedding_model": self.config.eval_embedding_model,
-                "ollama_base_url": self.config.ollama_base_url,
+                "vllm_base_url": self.config.vllm_base_url,
                 "metrics": [type(m).__name__ for m in metrics],
             },
             total_samples=len(samples),

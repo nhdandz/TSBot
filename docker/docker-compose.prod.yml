@@ -1,0 +1,214 @@
+version: "3.9"
+
+# =============================================================================
+# TSBot — Production Stack (Máy Application, 16GB GPU)
+#
+# Kiến trúc 2 máy:
+#   Máy này (Application):  Nginx + FastAPI + PostgreSQL + Qdrant + Redis
+#   Máy A100 (riêng):       vLLM server (không nằm trong file này)
+#
+# Khởi động:
+#   docker compose -f docker/docker-compose.prod.yml --env-file .env.production up -d
+# =============================================================================
+
+services:
+
+  # ── Nginx (Frontend + Reverse Proxy) ─────────────────────────────────────
+  nginx:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    container_name: tsbot-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      # Uncommment khi có SSL certificate:
+      # - "443:443"
+      # volumes:
+      #   - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      tsbot-api:
+        condition: service_healthy
+    networks:
+      - tsbot-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── FastAPI Backend ───────────────────────────────────────────────────────
+  tsbot-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: tsbot-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Application
+      - APP_ENV=production
+      - DEBUG=false
+      - LOG_LEVEL=info
+      - API_WORKERS=${API_WORKERS:-4}
+
+      # vLLM server (máy A100 riêng biệt)
+      - VLLM_BASE_URL=${VLLM_BASE_URL}
+      - VLLM_MAIN_MODEL=${VLLM_MAIN_MODEL:-Qwen/Qwen2.5-7B-Instruct}
+      - VLLM_GRADER_MODEL=${VLLM_GRADER_MODEL:-Qwen/Qwen2.5-1.5B-Instruct}
+      - VLLM_API_KEY=${VLLM_API_KEY:-EMPTY}
+
+      # Embeddings (dùng GPU local 16GB)
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
+      - EMBEDDING_DEVICE=cuda
+
+      # PostgreSQL
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_POOL_SIZE=${POSTGRES_POOL_SIZE:-20}
+      - POSTGRES_MAX_OVERFLOW=${POSTGRES_MAX_OVERFLOW:-40}
+
+      # Qdrant
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+
+      # Redis
+      - REDIS_URL=redis://redis:6379
+      - USE_REDIS_CACHE=true
+
+      # Security — BẮT BUỘC đặt trong .env.production
+      - SECRET_KEY=${SECRET_KEY}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+
+      # CORS — đặt domain thật
+      - CORS_ORIGINS=${CORS_ORIGINS}
+
+    volumes:
+      - ../data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s  # Cho đủ thời gian load embedding model
+      retries: 3
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1  # Dùng GPU cho sentence-transformers + reranker
+              capabilities: [gpu]
+        limits:
+          memory: 12G  # Để lại RAM cho OS và các services khác
+    networks:
+      - tsbot-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: tsbot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+    networks:
+      - tsbot-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  # ── Qdrant Vector DB ──────────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.12.0
+    container_name: tsbot-qdrant
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333"  # Chỉ bind localhost, không expose ra ngoài
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+      QDRANT__LOG_LEVEL: WARNING
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:6333/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+    networks:
+      - tsbot-network
+
+  # ── Redis (Semantic Cache) ────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: tsbot-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --save 60 1
+      --appendonly no
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 600M
+    networks:
+      - tsbot-network
+
+
+volumes:
+  postgres_data:
+    name: tsbot-prod-postgres
+  qdrant_data:
+    name: tsbot-prod-qdrant
+  redis_data:
+    name: tsbot-prod-redis
+
+networks:
+  tsbot-network:
+    name: tsbot-prod-network
+    driver: bridge

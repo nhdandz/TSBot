@@ -23,32 +23,33 @@ async def get_trend(
     gioi_tinh: Optional[str] = Query(None, description="nam hoặc nu"),
     khu_vuc: Optional[str] = Query(None, description="mien_bac hoặc mien_nam"),
 ) -> dict:
-    """Xu hướng điểm chuẩn qua các năm kèm dự đoán năm tới.
-
-    Returns:
-        data_points, prediction, regression info.
-    """
+    """Xu hướng điểm chuẩn qua các năm kèm dự đoán năm tới."""
     if not truong and not nganh:
         raise HTTPException(
             status_code=400, detail="Cần cung cấp ít nhất truong hoặc nganh"
         )
 
     db = get_postgres_db()
-
     conditions = ["1=1"]
+    params: dict = {}
+
     if truong:
-        conditions.append(f"ten_khong_dau ILIKE '%{truong}%'")
+        conditions.append("ten_khong_dau ILIKE :truong")
+        params["truong"] = f"%{truong}%"
     if nganh:
-        conditions.append(f"ten_nganh_khong_dau ILIKE '%{nganh}%'")
+        conditions.append("ten_nganh_khong_dau ILIKE :nganh")
+        params["nganh"] = f"%{nganh}%"
     if ma_khoi:
-        conditions.append(f"ma_khoi = '{ma_khoi}'")
+        conditions.append("ma_khoi = :ma_khoi")
+        params["ma_khoi"] = ma_khoi
     if gioi_tinh:
-        conditions.append(f"gioi_tinh = '{gioi_tinh}'")
+        conditions.append("gioi_tinh = :gioi_tinh")
+        params["gioi_tinh"] = gioi_tinh
     if khu_vuc:
-        conditions.append(f"khu_vuc = '{khu_vuc}'")
+        conditions.append("khu_vuc = :khu_vuc")
+        params["khu_vuc"] = khu_vuc
 
     where_clause = " AND ".join(conditions)
-
     sql = f"""
         SELECT nam, AVG(diem_chuan) AS diem_chuan
         FROM view_tra_cuu_diem
@@ -59,7 +60,7 @@ async def get_trend(
     """
 
     try:
-        rows = await db.fetch_all(sql)
+        rows = await db.fetch_all(sql, params)
     except Exception as e:
         logger.error(f"Trend query error: {e}")
         raise HTTPException(status_code=500, detail="Lỗi truy vấn cơ sở dữ liệu")
@@ -90,11 +91,7 @@ async def get_trend(
             "n_points": prediction_obj.n_points,
         }
 
-    return {
-        "data_points": data_points,
-        "prediction": prediction,
-        "regression": regression,
-    }
+    return {"data_points": data_points, "prediction": prediction, "regression": regression}
 
 
 # ---------------------------------------------------------------------------
@@ -108,25 +105,26 @@ async def compare_schools(
     khu_vuc: Optional[str] = Query(None, description="mien_bac hoặc mien_nam"),
     limit: int = Query(20, ge=1, le=50),
 ) -> list[dict]:
-    """So sánh điểm chuẩn trung bình giữa các trường.
-
-    Returns:
-        List of {ten_truong, diem_trung_binh, diem_cao_nhat, diem_thap_nhat}.
-    """
+    """So sánh điểm chuẩn trung bình giữa các trường."""
     db = get_postgres_db()
-
     conditions = ["1=1"]
-    if nam:
-        conditions.append(f"nam = {nam}")
+    params: dict = {}
+
+    if nam is not None:
+        conditions.append("nam = :nam")
+        params["nam"] = nam
     if ma_khoi:
-        conditions.append(f"ma_khoi = '{ma_khoi}'")
+        conditions.append("ma_khoi = :ma_khoi")
+        params["ma_khoi"] = ma_khoi
     if gioi_tinh:
-        conditions.append(f"gioi_tinh = '{gioi_tinh}'")
+        conditions.append("gioi_tinh = :gioi_tinh")
+        params["gioi_tinh"] = gioi_tinh
     if khu_vuc:
-        conditions.append(f"khu_vuc = '{khu_vuc}'")
+        conditions.append("khu_vuc = :khu_vuc")
+        params["khu_vuc"] = khu_vuc
 
     where_clause = " AND ".join(conditions)
-
+    # limit đã được FastAPI validate là int trong [1,50] → an toàn dùng trực tiếp
     sql = f"""
         SELECT
             ten_truong,
@@ -142,7 +140,7 @@ async def compare_schools(
     """
 
     try:
-        rows = await db.fetch_all(sql)
+        rows = await db.fetch_all(sql, params)
     except Exception as e:
         logger.error(f"Compare query error: {e}")
         raise HTTPException(status_code=500, detail="Lỗi truy vấn cơ sở dữ liệu")
@@ -167,21 +165,19 @@ async def get_distribution(
     nam: Optional[int] = Query(None, description="Năm tuyển sinh"),
     ma_khoi: Optional[str] = Query(None, description="Mã khối thi"),
 ) -> dict:
-    """Phân phối điểm chuẩn (dạng histogram).
-
-    Returns:
-        bins (nhãn khoảng), counts (số lượng).
-    """
+    """Phân phối điểm chuẩn (dạng histogram)."""
     db = get_postgres_db()
-
     conditions = ["1=1"]
-    if nam:
-        conditions.append(f"nam = {nam}")
+    params: dict = {}
+
+    if nam is not None:
+        conditions.append("nam = :nam")
+        params["nam"] = nam
     if ma_khoi:
-        conditions.append(f"ma_khoi = '{ma_khoi}'")
+        conditions.append("ma_khoi = :ma_khoi")
+        params["ma_khoi"] = ma_khoi
 
     where_clause = " AND ".join(conditions)
-
     sql = f"""
         SELECT diem_chuan FROM view_tra_cuu_diem
         WHERE {where_clause} AND diem_chuan IS NOT NULL
@@ -189,7 +185,7 @@ async def get_distribution(
     """
 
     try:
-        rows = await db.fetch_all(sql)
+        rows = await db.fetch_all(sql, params)
     except Exception as e:
         logger.error(f"Distribution query error: {e}")
         raise HTTPException(status_code=500, detail="Lỗi truy vấn cơ sở dữ liệu")
@@ -199,7 +195,6 @@ async def get_distribution(
 
     scores = [float(r["diem_chuan"]) for r in rows]
 
-    # Build histogram with fixed bins [10,12,14,...,30]
     bin_edges = list(range(10, 32, 2))
     bins = [f"{b}–{b + 2}" for b in bin_edges[:-1]]
     counts = [0] * len(bins)
@@ -210,7 +205,6 @@ async def get_distribution(
                 counts[i] += 1
                 break
         else:
-            # score == 30 goes in last bin
             if s == bin_edges[-1]:
                 counts[-1] += 1
 
@@ -258,9 +252,10 @@ async def get_schools_summary() -> dict:
         for r in rows
     ]
 
-    nam_sql = "SELECT DISTINCT nam FROM view_tra_cuu_diem ORDER BY nam"
     try:
-        nam_rows = await db.fetch_all(nam_sql)
+        nam_rows = await db.fetch_all(
+            "SELECT DISTINCT nam FROM view_tra_cuu_diem ORDER BY nam"
+        )
         years = [int(r["nam"]) for r in nam_rows]
     except Exception:
         years = []

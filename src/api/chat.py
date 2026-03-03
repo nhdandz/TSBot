@@ -7,11 +7,12 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents.supervisor import get_supervisor_agent
+from src.api._limiter import limiter
 from src.database.models import ChatHistory, Feedback
 from src.database.postgres import get_db_session
 
@@ -57,7 +58,9 @@ class FeedbackResponse(BaseModel):
 
 # REST Endpoints
 @router.post("/chat", response_model=ChatResponse)
+@limiter.limit("30/minute")
 async def chat(
+    http_request: Request,
     request: ChatRequest,
     session: AsyncSession = Depends(get_db_session),
 ) -> ChatResponse:
@@ -74,7 +77,6 @@ async def chat(
     session_id = request.session_id or str(uuid.uuid4())
 
     logger.info(f"Chat request: session={session_id}")
-    print(f"[CHAT] Full query: {request.message}", flush=True)
 
     try:
         # Save user message to history

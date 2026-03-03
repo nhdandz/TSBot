@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -129,6 +130,8 @@ class DiemChuan(Base):
         UniqueConstraint(
             "nganh_id", "khoi_thi_id", "nam", "gioi_tinh", "khu_vuc", name="uq_diem_chuan"
         ),
+        # Composite index cho các filter hay dùng trong analytics và SQL agent
+        Index("ix_diem_chuan_filter", "nam", "gioi_tinh", "khu_vuc"),
     )
 
     # Relationships
@@ -171,7 +174,12 @@ class ChatHistory(Base):
     role: Mapped[str] = mapped_column(String(20), nullable=False)  # 'user', 'assistant'
     content: Mapped[str] = mapped_column(Text, nullable=False)
     chat_metadata: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON string
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+    __table_args__ = (
+        # Index để sort sessions theo thời gian (dùng trong /sessions endpoint)
+        Index("ix_chat_history_session_created", "session_id", "created_at"),
+    )
 
 
 class Feedback(Base):
