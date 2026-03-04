@@ -36,9 +36,6 @@ structlog.configure(
 
 logger = structlog.get_logger()
 
-# Rate limiter — dùng IP làm key
-limiter = Limiter(key_func=get_remote_address)
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
