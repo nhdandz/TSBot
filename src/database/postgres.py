@@ -82,7 +82,7 @@ class PostgresDB:
     async def create_tables(self) -> None:
         """Create all database tables and views."""
         async with self.engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(lambda c: Base.metadata.create_all(c, checkfirst=True))
         logger.info("Database tables created successfully")
         await self._create_views()
 

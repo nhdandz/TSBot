@@ -93,11 +93,12 @@ services:
 
     volumes:
       - ../data:/app/data
+      - hf_cache:/root/.cache/huggingface  # Cache model để không download lại mỗi restart
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
-      start_period: 60s  # Cho đủ thời gian load embedding model
+      start_period: 180s  # Download + load BAAI/bge-m3 lần đầu mất ~3 phút
       retries: 3
     deploy:
       resources:
@@ -198,6 +199,8 @@ volumes:
     name: tsbot-prod-qdrant
   redis_data:
     name: tsbot-prod-redis
+  hf_cache:
+    name: tsbot-prod-hf-cache
 
 networks:
   tsbot-network:
