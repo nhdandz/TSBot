@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import re
+import uuid
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -181,7 +182,7 @@ class DocxChunker:
     @staticmethod
     def _make_id(section_type: str, content: str, position: int) -> str:
         raw = f"{section_type}_{content[:50]}_{position}"
-        return hashlib.md5(raw.encode("utf-8")).hexdigest()[:16]
+        return str(uuid.UUID(hashlib.md5(raw.encode("utf-8")).hexdigest()))
 
     def _detect_section(self, text: str) -> Optional[Dict]:
         """Phát hiện loại section từ text của một paragraph."""
