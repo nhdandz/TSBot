@@ -41,15 +41,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Create non-root user
-RUN useradd --create-home --shell /bin/bash tsbot
+# Create non-root user và data directories (còn là root)
+RUN useradd --create-home --shell /bin/bash tsbot \
+    && mkdir -p /app/data/documents /app/data/sql_examples /app/data/intents \
+    && chown -R tsbot:tsbot /app
+
 USER tsbot
 
 # Copy application code
 COPY --chown=tsbot:tsbot . .
-
-# Create data directories
-RUN mkdir -p data/documents data/sql_examples data/intents
 
 # Expose port
 EXPOSE 8000
