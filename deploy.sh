@@ -11,7 +11,7 @@ echo "=== [1/4] Pull code mới từ git ==="
 git pull origin main
 
 echo "=== [2/4] Rebuild images ==="
-$COMPOSE build --no-cache tsbot-api nginx
+$COMPOSE build tsbot-api nginx
 
 echo "=== [3/4] Restart services ==="
 $COMPOSE up -d --remove-orphans
