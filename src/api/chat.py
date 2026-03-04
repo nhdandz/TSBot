@@ -60,21 +60,21 @@ class FeedbackResponse(BaseModel):
 @router.post("/chat", response_model=ChatResponse)
 @limiter.limit("30/minute")
 async def chat(
-    http_request: Request,
-    request: ChatRequest,
+    request: Request,
+    body: ChatRequest,
     session: AsyncSession = Depends(get_db_session),
 ) -> ChatResponse:
     """Process a chat message and return response.
 
     Args:
-        request: Chat request with message.
+        body: Chat request with message.
         session: Database session.
 
     Returns:
         Chat response with bot answer.
     """
     # Generate session ID if not provided
-    session_id = request.session_id or str(uuid.uuid4())
+    session_id = body.session_id or str(uuid.uuid4())
 
     logger.info(f"Chat request: session={session_id}")
 
@@ -83,7 +83,7 @@ async def chat(
         user_history = ChatHistory(
             session_id=session_id,
             role="user",
-            content=request.message,
+            content=body.message,
         )
         session.add(user_history)
         await session.flush()
@@ -91,7 +91,7 @@ async def chat(
         # Process through supervisor agent
         supervisor = get_supervisor_agent()
         result = await supervisor.process(
-            query=request.message,
+            query=body.message,
             session_id=session_id,
         )
 

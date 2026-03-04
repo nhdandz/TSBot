@@ -146,7 +146,7 @@ async def get_current_user(
 @router.post("/login", response_model=Token)
 @limiter.limit("5/minute")
 async def login(
-    http_request: Request,
+    request: Request,
     credentials: UserLogin,
     session: AsyncSession = Depends(get_db_session),
 ) -> Token:
