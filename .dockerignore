@@ -1,0 +1,61 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environment files — KHÔNG copy vào image, inject qua docker-compose
+.env
+.env.*
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Mypy
+.mypy_cache/
+
+# Data (mount as volume)
+data/
+
+# Docs (không cần trong image)
+docs/
+
+# Tests
+tests/
+
+# Frontend source (chỉ cần dist sau build, handled bởi Dockerfile.frontend)
+frontend/node_modules/
+frontend/dist/

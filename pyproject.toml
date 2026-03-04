@@ -2,7 +2,6 @@
 name = "tsbot"
 version = "0.1.0"
 description = "Chatbot AI Tư Vấn Tuyển Sinh Quân Sự Việt Nam - Agentic RAG Multi-Agent System"
-readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "TSBot Team" }]
