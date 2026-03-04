@@ -6,6 +6,7 @@ parent/child/sibling navigation and BM25 sparse search.
 
 import json
 import logging
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -15,6 +16,20 @@ from src.core.config import settings
 from src.core.embeddings import get_embedding_service
 
 logger = logging.getLogger(__name__)
+
+
+def _to_qdrant_id(chunk_id: str) -> str:
+    """Convert chunk_id sang UUID hợp lệ cho Qdrant.
+    Qdrant chỉ chấp nhận UUID hoặc unsigned integer.
+    """
+    try:
+        uuid.UUID(str(chunk_id))
+        return str(chunk_id)
+    except ValueError:
+        # Pad hex string về 32 ký tự rồi parse thành UUID
+        hex_str = str(chunk_id).replace("-", "").ljust(32, "0")[:32]
+        return str(uuid.UUID(hex_str))
+
 
 # Global vector store state
 _store: Dict[str, Any] = {
@@ -193,7 +208,7 @@ def _upsert_to_qdrant(chunks: List[Dict], embeddings: np.ndarray):
 
         vectors.append(embeddings[i].tolist())
         payloads.append(payload)
-        ids.append(str(chunk_id))
+        ids.append(_to_qdrant_id(str(chunk_id)))
 
     # Run async upsert
     async def _do_upsert():
@@ -285,7 +300,7 @@ async def async_load_from_json(json_path: Optional[str] = None) -> Dict[str, Any
         payload = {"content": content, "chunk_id": chunk_id, **metadata}
         vectors.append(embeddings[i].tolist())
         payloads.append(payload)
-        ids.append(str(chunk_id))
+        ids.append(_to_qdrant_id(str(chunk_id)))
 
     await qdrant.create_collection(
         collection_name=settings.qdrant_legal_collection,
