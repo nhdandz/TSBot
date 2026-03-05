@@ -181,13 +181,58 @@ class LLMService:
         messages.append(("human", prompt))
 
         first_token = True
+        buffer = ""
+        in_think = False
+
         try:
             async for chunk in llm.astream(messages, **kwargs):
-                if hasattr(chunk, "content") and chunk.content:
-                    if first_token:
-                        self._circuit_breaker.record_success()
-                        first_token = False
-                    yield chunk.content
+                if not (hasattr(chunk, "content") and chunk.content):
+                    continue
+
+                if first_token:
+                    self._circuit_breaker.record_success()
+                    first_token = False
+
+                buffer += chunk.content
+
+                # Lọc <think>...</think> tags (reasoning models: qwen3, deepseek-r1)
+                while True:
+                    if in_think:
+                        end = buffer.find("</think>")
+                        if end == -1:
+                            end = buffer.find("</thinking>")
+                            tag_len = len("</thinking>")
+                        else:
+                            tag_len = len("</think>")
+
+                        if end != -1:
+                            buffer = buffer[end + tag_len:]
+                            in_think = False
+                        else:
+                            buffer = ""  # discard — vẫn trong think block
+                            break
+                    else:
+                        start = buffer.find("<think>")
+                        if start == -1:
+                            start = buffer.find("<thinking>")
+                        if start != -1:
+                            # Yield phần trước think tag
+                            if start > 0:
+                                yield buffer[:start]
+                            buffer = buffer[start:]
+                            in_think = True
+                        else:
+                            # Không có think tag — yield an toàn trừ tail có thể là đầu tag
+                            safe = max(0, len(buffer) - 12)  # len("<thinking>") + 2
+                            if safe > 0:
+                                yield buffer[:safe]
+                                buffer = buffer[safe:]
+                            break
+
+            # Flush phần còn lại sau khi stream kết thúc
+            if buffer and not in_think:
+                yield buffer
+
         except Exception as e:
             self._circuit_breaker.record_failure()
             raise
