@@ -112,6 +112,7 @@ class Settings(BaseSettings):
 
     # Reranker
     reranker_model: str = "namdp-ptit/ViRanker"
+    reranker_device: str = "cpu"  # cpu để tránh tranh VRAM với embedding model
     reranker_top_k: int = 3
     reranker_weights: dict = {"cross_encoder": 0.55, "retrieval": 0.35, "metadata": 0.10}
     reranker_weights_by_intent: dict = {

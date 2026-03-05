@@ -87,7 +87,7 @@ class LLMService:
             "temperature": temperature,
         }
         if top_p is not None:
-            kwargs["model_kwargs"] = {"top_p": top_p}
+            kwargs["top_p"] = top_p
         return ChatOpenAI(**kwargs)
 
     @property

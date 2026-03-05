@@ -35,7 +35,7 @@ class HybridReranker:
             try:
                 from sentence_transformers import CrossEncoder
                 logger.info(f"Loading Cross-Encoder: {self.model_name}")
-                self._model = CrossEncoder(self.model_name, max_length=512)
+                self._model = CrossEncoder(self.model_name, max_length=512, device=settings.reranker_device)
                 logger.info("Cross-Encoder loaded successfully")
             except Exception as e:
                 logger.warning(f"Failed to load CrossEncoder: {e}")
