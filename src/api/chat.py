@@ -255,8 +255,8 @@ async def chat_stream(
 @router.post("/feedback", response_model=FeedbackResponse)
 @limiter.limit("20/minute")
 async def submit_feedback(
-    http_request: Request,
-    request: FeedbackRequest,
+    request: Request,
+    body: FeedbackRequest,
     session: AsyncSession = Depends(get_db_session),
 ) -> FeedbackResponse:
     """Submit feedback for a chat response.
@@ -270,16 +270,16 @@ async def submit_feedback(
     """
     try:
         feedback = Feedback(
-            session_id=request.session_id,
-            chat_history_id=request.message_id,
-            rating=request.rating,
-            feedback_type=request.feedback_type,
-            comment=request.comment,
+            session_id=body.session_id,
+            chat_history_id=body.message_id,
+            rating=body.rating,
+            feedback_type=body.feedback_type,
+            comment=body.comment,
         )
         session.add(feedback)
         await session.commit()
 
-        logger.info(f"Feedback received: session={request.session_id}, type={request.feedback_type}")
+        logger.info(f"Feedback received: session={body.session_id}, type={body.feedback_type}")
 
         return FeedbackResponse(
             success=True,
@@ -390,7 +390,7 @@ async def delete_chat_session(
 @router.get("/history/{session_id}")
 @limiter.limit("60/minute")
 async def get_chat_history(
-    http_request: Request,
+    request: Request,
     session_id: str,
     limit: int = 50,
     session: AsyncSession = Depends(get_db_session),
