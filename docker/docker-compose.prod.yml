@@ -55,10 +55,11 @@ services:
       # Application
       - APP_ENV=production
       - DEBUG=false
-      - LOG_LEVEL=info
-      # 1 worker duy nhất để tránh mỗi worker load embedding model riêng lên GPU
-      # BAAI/bge-m3 ~4GB VRAM — 4 workers = 16GB → OOM
-      - API_WORKERS=1
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # Số worker = số lần BAAI/bge-m3 (~2.5GB) load lên GPU
+      # GPU 16GB: tối đa 3 workers an toàn. GPU 8GB: giữ 1.
+      # Default 1 để an toàn — tăng trong .env.production nếu GPU đủ VRAM
+      - API_WORKERS=${API_WORKERS:-1}
 
       # vLLM server (máy A100 riêng biệt)
       - VLLM_BASE_URL=${VLLM_BASE_URL}
