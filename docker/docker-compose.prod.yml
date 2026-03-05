@@ -18,12 +18,14 @@ services:
       dockerfile: docker/Dockerfile.frontend
     container_name: tsbot-nginx
     restart: unless-stopped
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
     ports:
       - "80:80"
-      # Uncommment khi có SSL certificate:
-      # - "443:443"
-      # volumes:
-      #   - /etc/letsencrypt:/etc/letsencrypt:ro
+      - "443:443"
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - certbot_webroot:/var/www/certbot:ro
     depends_on:
       tsbot-api:
         condition: service_healthy
@@ -201,6 +203,8 @@ volumes:
     name: tsbot-prod-redis
   hf_cache:
     name: tsbot-prod-hf-cache
+  certbot_webroot:
+    name: tsbot-prod-certbot-webroot
 
 networks:
   tsbot-network:

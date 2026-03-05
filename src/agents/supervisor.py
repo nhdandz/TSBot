@@ -1,12 +1,12 @@
 """Supervisor Agent using LangGraph for orchestrating multi-agent system."""
 
+import json
 import logging
 import operator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Annotated, Any, Optional, TypedDict
+from typing import Annotated, Any, AsyncGenerator, Optional, TypedDict
 
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
 from src.agents.rag_agent import RAGAgent, get_rag_agent
@@ -154,7 +154,7 @@ class SupervisorAgent:
         sql_agent: Optional[SQLAgent] = None,
         rag_agent: Optional[RAGAgent] = None,
         router: Optional[SemanticRouter] = None,
-        enable_memory: bool = True,
+        enable_memory: bool = False,
     ):
         """Initialize Supervisor Agent.
 
@@ -169,8 +169,7 @@ class SupervisorAgent:
         self.router = router or get_semantic_router()
         self.llm_service = get_llm_service()
 
-        # Build the workflow graph
-        self.memory = MemorySaver() if enable_memory else None
+        # Build the workflow graph (stateless — memory handled via DB history)
         self.graph = self._build_graph()
 
     def _build_graph(self) -> StateGraph:
@@ -234,8 +233,8 @@ class SupervisorAgent:
         workflow.add_edge("combine", END)
         workflow.add_edge("clarify", END)
 
-        # Compile with memory
-        return workflow.compile(checkpointer=self.memory)
+        # Stateless compile — history managed via PostgreSQL
+        return workflow.compile()
 
     async def _route_node(self, state: ConversationState) -> dict:
         """Route the query to appropriate agent.
@@ -246,13 +245,9 @@ class SupervisorAgent:
         Returns:
             Updated state with routing decision.
         """
-        import traceback
-
-        print(f"[DEBUG] _route_node called")
-
         query = state["current_query"]
         messages = state.get("messages", [])
-        print(f"[DEBUG] Processing query: {query[:50]}...")
+        logger.debug(f"_route_node called, query: {query[:50]}...")
 
         # Pre-check: chart/trend queries always go to SQL agent
         _chart_kw = [
@@ -266,24 +261,21 @@ class SupervisorAgent:
             any(kw in _q_lower for kw in _chart_kw)
             and any(kw in _q_lower for kw in _score_kw)
         ):
-            print("[DEBUG] Pre-check: chart+score query → forcing SQL agent")
+            logger.debug("Pre-check: chart+score query → forcing SQL agent")
             return {"intent": "score_lookup", "agent_type": AgentType.SQL}
 
         # Try semantic router first for fast routing
         try:
-            print("[DEBUG] Calling semantic router...")
             route_result = await self.router.route(query)
-            print(f"[DEBUG] Semantic router returned: {type(route_result)}, value={route_result}")
+            logger.debug(f"Semantic router returned: intent={route_result.get('intent') if route_result else None}")
 
             if route_result is None:
-                print("[DEBUG] Semantic router returned None")
                 raise ValueError("Router returned None")
 
-            print(f"[DEBUG] Route result keys: {list(route_result.keys()) if isinstance(route_result, dict) else 'not a dict'}")
             intent = route_result.get("intent", "unknown")
             confidence = route_result.get("confidence", 0.0)
 
-            print(f"[DEBUG] Semantic router result: intent={intent}, confidence={confidence:.3f}")
+            logger.debug(f"Semantic router result: intent={intent}, confidence={confidence:.3f}")
 
             # Use best intent from all_scores if confidence is close but below threshold
             if intent == "unknown" and confidence > 0.75:
@@ -292,7 +284,7 @@ class SupervisorAgent:
                     best_intent = max(all_scores, key=all_scores.get)
                     intent = best_intent
                     confidence = all_scores[best_intent]
-                    print(f"[DEBUG] Using best intent from all_scores: {intent}={confidence:.3f}")
+                    logger.debug(f"Using best intent from all_scores: {intent}={confidence:.3f}")
 
             if confidence > 0.75:
                 # Complete mapping for all intents from intents.json
@@ -349,11 +341,10 @@ class SupervisorAgent:
                     "agent_type": agent_type,
                 }
         except Exception as e:
-            print(f"[DEBUG] Semantic router failed: {e}")
-            print(f"[DEBUG] Traceback: {traceback.format_exc()}")
+            logger.warning(f"Semantic router failed: {e}", exc_info=True)
 
         # Fall back to LLM-based planning
-        print("[DEBUG] Falling back to LLM-based planning")
+        logger.debug("Falling back to LLM-based planning")
         history_text = "\n".join([
             f"{m['role']}: {m['content']}"
             for m in messages[-5:]  # Last 5 messages
@@ -362,15 +353,14 @@ class SupervisorAgent:
         prompt = PLANNING_PROMPT.format(query=query, history=history_text)
 
         try:
-            print("[DEBUG] Calling LLM generate_with_json...")
             response = await self.llm_service.generate_with_json(
                 prompt=prompt,
                 use_grader=False,
             )
-            print(f"[DEBUG] LLM response: {type(response)}, value={response}")
+            logger.debug(f"LLM planning response: {response}")
 
             if response is None:
-                print("[DEBUG] LLM returned None response, defaulting to GENERAL")
+                logger.warning("LLM returned None response, defaulting to GENERAL")
                 return {
                     "intent": "general",
                     "agent_type": AgentType.GENERAL,
@@ -385,7 +375,7 @@ class SupervisorAgent:
                 "clarification": None,  # Special case
             }.get(agent_str, AgentType.GENERAL)
 
-            print(f"[DEBUG] LLM planning result: agent={agent_str}, agent_type={agent_type}")
+            logger.debug(f"LLM planning result: agent={agent_str}, agent_type={agent_type}")
 
             return {
                 "intent": agent_str,
@@ -394,8 +384,7 @@ class SupervisorAgent:
             }
 
         except Exception as e:
-            print(f"[DEBUG] Planning failed: {e}")
-            print(f"[DEBUG] Traceback: {traceback.format_exc()}")
+            logger.error(f"LLM planning failed: {e}", exc_info=True)
             return {
                 "intent": "general",
                 "agent_type": AgentType.GENERAL,
@@ -545,7 +534,7 @@ class SupervisorAgent:
             # Expand abbreviations (e.g. HVKTQS → học viện kỹ thuật quân sự) then normalize
             query_expanded = VietnameseTextProcessor.expand_abbreviations(query_collapsed)
             query_normalized = VietnameseTextProcessor.normalize_text(query_expanded)
-            print(f"[DEBUG] school_info: collapsed='{query_collapsed}', expanded='{query_expanded}', normalized='{query_normalized}'")
+            logger.debug(f"school_info: collapsed='{query_collapsed}', normalized='{query_normalized}'")
 
             # Fetch all active schools and match against query
             db = get_postgres_db()
@@ -576,14 +565,14 @@ class SupervisorAgent:
                 for s in school_candidates:
                     if s["_ma"] and s["_ma"] in query_lower:
                         school = s
-                        print(f"[DEBUG] school_info: matched by ma_truong '{s['_ma']}'")
+                        logger.debug(f"school_info: matched by ma_truong '{s['_ma']}'")
                         break
 
             if not school:
-                print(f"[DEBUG] school_info: no school matched in query '{query_normalized}'")
+                logger.debug(f"school_info: no school matched in query '{query_normalized}'")
                 return {}
 
-            print(f"[DEBUG] school_info: found '{school['ten_truong']}' (id={school['id']})")
+            logger.debug(f"school_info: found '{school['ten_truong']}' (id={school['id']})")
 
             # Fetch majors for this school
             nganh_list = await db.fetch_all(
@@ -650,7 +639,7 @@ class SupervisorAgent:
         sql_result = state.get("sql_result") or {}
         rag_result = state.get("rag_result") or {}
 
-        print(f"[DEBUG] _combine_node: sql_result={type(sql_result)}, rag_result={type(rag_result)}")
+        logger.debug(f"_combine_node: sql has results={bool(sql_result.get('results'))}, rag has answer={bool(rag_result.get('answer'))}")
 
         # If only RAG has results, use that
         if not sql_result.get("results") and rag_result.get("answer"):
@@ -713,6 +702,7 @@ class SupervisorAgent:
         query: str,
         session_id: str = "default",
         context: Optional[dict] = None,
+        conversation_history: Optional[list[dict]] = None,
     ) -> dict[str, Any]:
         """Process a user query through the supervisor.
 
@@ -720,16 +710,23 @@ class SupervisorAgent:
             query: User's question.
             session_id: Session ID for memory.
             context: Optional additional context.
+            conversation_history: Recent messages from DB (list of {role, content}).
 
         Returns:
             Response dictionary.
         """
-        import traceback
-        print(f"[DEBUG] SupervisorAgent.process called with query: {query[:50]}...")
+        logger.debug(f"SupervisorAgent.process: query='{query[:50]}...', history={len(conversation_history or [])} messages")
+
+        # Build messages list: history (last 5) + current user message
+        prior_messages = [
+            {"role": m["role"], "content": m["content"]}
+            for m in (conversation_history or [])[-5:]
+        ]
+        messages = prior_messages + [{"role": "user", "content": query}]
 
         # Initialize state
         initial_state: ConversationState = {
-            "messages": [{"role": "user", "content": query}],
+            "messages": messages,
             "current_query": query,
             "intent": None,
             "agent_type": None,
@@ -743,11 +740,8 @@ class SupervisorAgent:
             "iteration": 0,
         }
 
-        # Run the graph
-        config = {"configurable": {"thread_id": session_id}}
-
         try:
-            final_state = await self.graph.ainvoke(initial_state, config)
+            final_state = await self.graph.ainvoke(initial_state)
 
             return {
                 "query": query,
@@ -759,33 +753,157 @@ class SupervisorAgent:
             }
 
         except Exception as e:
-            import traceback
-            print(f"[DEBUG] Supervisor error: {e}")
-            print(f"[DEBUG] Full traceback:\n{traceback.format_exc()}")
+            logger.error(f"Supervisor error: {e}", exc_info=True)
             return {
                 "query": query,
                 "response": "Xin lỗi, đã xảy ra lỗi khi xử lý yêu cầu của bạn. Vui lòng thử lại.",
                 "error": str(e),
             }
 
-    async def get_history(self, session_id: str) -> list[dict]:
-        """Get conversation history for a session.
+    async def process_stream(
+        self,
+        query: str,
+        session_id: str = "default",
+        conversation_history: Optional[list[dict]] = None,
+    ) -> AsyncGenerator[dict, None]:
+        """Stream xử lý query — two-phase: routing+retrieval → stream LLM tokens.
 
-        Args:
-            session_id: Session ID.
-
-        Returns:
-            List of messages.
+        Yields SSE events:
+          {"type": "meta",  "intent": str, "sources": list}
+          {"type": "token", "content": str}
+          {"type": "done",  "chart_data": dict|None}
+          {"type": "error", "message": str}
         """
-        if not self.memory:
-            return []
+        from src.core.llm import ServiceUnavailableError
+        from src.agents.rag_agent import ANSWER_PROMPT, INTENT_INSTRUCTIONS
+
+        prior_messages = [
+            {"role": m["role"], "content": m["content"]}
+            for m in (conversation_history or [])[-5:]
+        ]
+        messages = prior_messages + [{"role": "user", "content": query}]
+
+        initial_state: ConversationState = {
+            "messages": messages,
+            "current_query": query,
+            "intent": None,
+            "agent_type": None,
+            "sql_result": None,
+            "rag_result": None,
+            "response": None,
+            "sources": [],
+            "chart_data": None,
+            "needs_clarification": False,
+            "error": None,
+            "iteration": 0,
+        }
 
         try:
-            config = {"configurable": {"thread_id": session_id}}
-            state = await self.graph.aget_state(config)
-            return state.values.get("messages", [])
-        except Exception:
-            return []
+            # Phase 1: Routing (fast, ~100ms)
+            route_result = await self._route_node(initial_state)
+            intent = route_result.get("intent", "general")
+            agent_type = route_result.get("agent_type", AgentType.GENERAL)
+            needs_clarification = route_result.get("needs_clarification", False)
+
+            yield {"type": "meta", "intent": intent, "sources": []}
+
+            # Phase 2: Retrieval + Stream LLM
+            if needs_clarification:
+                response_text = (
+                    "Tôi cần thêm thông tin để trả lời câu hỏi của bạn.\n\n"
+                    "Bạn muốn hỏi về:\n"
+                    "1. Điểm chuẩn/chỉ tiêu tuyển sinh?\n"
+                    "2. Tiêu chuẩn/điều kiện xét tuyển?\n"
+                    "3. Quy trình/thủ tục đăng ký?\n\n"
+                    "Vui lòng nói rõ hơn để tôi có thể giúp bạn tốt hơn."
+                )
+                yield {"type": "token", "content": response_text}
+                yield {"type": "done", "chart_data": None}
+                return
+
+            if agent_type == AgentType.GENERAL:
+                prompt = GENERAL_PROMPT.format(query=query)
+                async for token in self.llm_service.generate_stream(prompt=prompt):
+                    yield {"type": "token", "content": token}
+                yield {"type": "done", "chart_data": None}
+                return
+
+            if agent_type == AgentType.SQL:
+                sql_raw = await self.sql_agent.process_query(query, stream=True)
+                results = sql_raw.get("raw_results") or []
+                entities = sql_raw.get("entities", {})
+                chart_data = sql_raw.get("chart_data")
+
+                if not results:
+                    yield {"type": "token", "content": "Không tìm thấy dữ liệu phù hợp với yêu cầu của bạn."}
+                    yield {"type": "done", "chart_data": None}
+                    return
+
+                table = self.sql_agent._build_markdown_table(results)
+                score_context = f"\nNgười dùng hỏi với điểm số: {entities['score']}" if entities.get("score") else ""
+                prompt = (
+                    f"Trả lời câu hỏi dưới đây bằng 1-3 câu ngắn gọn bằng tiếng Việt.\n"
+                    f"KHÔNG liệt kê lại dữ liệu vì đã có bảng chi tiết bên dưới.\n"
+                    f"Chỉ viết nhận xét/phân tích ngắn.{score_context}\n\n"
+                    f"Câu hỏi: {query}\n"
+                    f"Dữ liệu ({len(results)} dòng): {json.dumps(results[:20], ensure_ascii=False)}"
+                )
+                system = "Bạn là trợ lý tư vấn tuyển sinh quân sự. Chỉ viết phần nhận xét, không liệt kê lại bảng dữ liệu."
+                async for token in self.llm_service.generate_stream(prompt=prompt, system_prompt=system):
+                    yield {"type": "token", "content": token}
+                # Append table as final chunk
+                yield {"type": "token", "content": f"\n\n{table}"}
+                yield {"type": "done", "chart_data": chart_data}
+                return
+
+            if agent_type == AgentType.SCHOOL_INFO:
+                # Run school info node (DB lookup + LLM) — stream the LLM part
+                school_state = dict(initial_state)
+                school_result = await self._school_info_node(school_state)
+                if school_result.get("response"):
+                    sources = school_result.get("sources", [])
+                    yield {"type": "meta", "intent": intent, "sources": sources}
+                    yield {"type": "token", "content": school_result["response"]}
+                    yield {"type": "done", "chart_data": None}
+                    return
+                # Fallback to RAG if school not found
+                agent_type = AgentType.RAG
+
+            # RAG path
+            rag_raw = await self.rag_agent.process_query(query, stream=True)
+            sources = rag_raw.get("sources", [])
+            rag_intent = rag_raw.get("intent", "general")
+
+            yield {"type": "meta", "intent": intent, "sources": sources}
+
+            # Cache hit: rag_agent trả về 'answer' thay vì 'context'
+            cached_answer = rag_raw.get("answer")
+            if cached_answer:
+                yield {"type": "token", "content": cached_answer}
+                yield {"type": "done", "chart_data": None}
+                return
+
+            context = rag_raw.get("context", "")
+            if not context:
+                yield {"type": "token", "content": "Không tìm thấy thông tin liên quan trong tài liệu."}
+                yield {"type": "done", "chart_data": None}
+                return
+
+            intent_instruction = INTENT_INSTRUCTIONS.get(rag_intent, "")
+            answer_prompt = ANSWER_PROMPT.format(
+                context=context,
+                question=query,
+                intent_instruction=intent_instruction,
+            )
+            async for token in self.llm_service.generate_stream(prompt=answer_prompt):
+                yield {"type": "token", "content": token}
+            yield {"type": "done", "chart_data": None}
+
+        except ServiceUnavailableError as e:
+            yield {"type": "error", "message": "Hệ thống AI đang tạm thời bận. Vui lòng thử lại sau ít phút."}
+        except Exception as e:
+            logger.error(f"process_stream error: {e}", exc_info=True)
+            yield {"type": "error", "message": "Đã xảy ra lỗi khi xử lý yêu cầu. Vui lòng thử lại."}
 
 
 # Factory function
@@ -796,5 +914,5 @@ def get_supervisor_agent() -> SupervisorAgent:
     """Get global Supervisor Agent instance."""
     global _supervisor_instance
     if _supervisor_instance is None:
-        _supervisor_instance = SupervisorAgent()
+        _supervisor_instance = SupervisorAgent(enable_memory=False)
     return _supervisor_instance

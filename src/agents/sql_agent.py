@@ -127,18 +127,19 @@ class SQLAgent:
         self,
         user_query: str,
         context: Optional[dict] = None,
+        stream: bool = False,
     ) -> dict[str, Any]:
         """Process a natural language query and return SQL results.
 
         Args:
             user_query: User's question in natural language.
             context: Optional context from conversation.
+            stream: If True, skip LLM answer generation and return raw results for streaming.
 
         Returns:
-            Dictionary with query, sql, results, and answer.
+            Dictionary with query, sql, results, and answer (or raw_results when stream=True).
         """
         logger.info(f"Processing SQL query: {user_query}")
-        print(f"[SQL] Full query: {user_query}", flush=True)
 
         # Extract entities from query
         entities = self._extract_entities(user_query)
@@ -170,13 +171,24 @@ class SQLAgent:
                 # Execute SQL
                 results = await self._execute_sql(sql)
 
-                # Generate natural language answer
-                answer = await self._generate_answer(user_query, results, entities)
-
                 # Build chart data for trend/comparison queries
                 chart_data = None
                 if entities.get("is_chart_query") and results:
                     chart_data = self._build_chart_data(user_query, results, entities)
+
+                # Stream mode: skip LLM answer, return raw data for supervisor streaming
+                if stream:
+                    return {
+                        "query": user_query,
+                        "sql": sql,
+                        "raw_results": results,
+                        "entities": entities,
+                        "attempts": attempt + 1,
+                        "chart_data": chart_data,
+                    }
+
+                # Generate natural language answer
+                answer = await self._generate_answer(user_query, results, entities)
 
                 return {
                     "query": user_query,

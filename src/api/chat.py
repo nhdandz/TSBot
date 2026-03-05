@@ -1,18 +1,21 @@
 """Chat API endpoints."""
 
 import ast
+import asyncio
 import json
 import logging
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, AsyncGenerator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents.supervisor import get_supervisor_agent
 from src.api._limiter import limiter
+from src.core.llm import ServiceUnavailableError
 from src.database.models import ChatHistory, Feedback
 from src.database.postgres import get_db_session
 
@@ -79,6 +82,20 @@ async def chat(
     logger.info(f"Chat request: session={session_id}")
 
     try:
+        from sqlalchemy import select as sa_select
+
+        # Fetch recent conversation history (last 5 messages) for context
+        history_result = await session.execute(
+            sa_select(ChatHistory.role, ChatHistory.content)
+            .where(ChatHistory.session_id == session_id)
+            .order_by(ChatHistory.created_at.desc())
+            .limit(5)
+        )
+        conversation_history = [
+            {"role": row.role, "content": row.content}
+            for row in reversed(history_result.all())
+        ]
+
         # Save user message to history
         user_history = ChatHistory(
             session_id=session_id,
@@ -88,12 +105,21 @@ async def chat(
         session.add(user_history)
         await session.flush()
 
-        # Process through supervisor agent
+        # Process through supervisor agent with conversation context (60s timeout)
         supervisor = get_supervisor_agent()
-        result = await supervisor.process(
-            query=body.message,
-            session_id=session_id,
-        )
+        try:
+            result = await asyncio.wait_for(
+                supervisor.process(
+                    query=body.message,
+                    session_id=session_id,
+                    conversation_history=conversation_history,
+                ),
+                timeout=60.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Supervisor timeout: session={session_id}")
+            await session.rollback()
+            raise HTTPException(status_code=504, detail="Yêu cầu xử lý quá lâu, vui lòng thử lại.")
 
         # Save assistant response to history
         assistant_history = ChatHistory(
@@ -116,14 +142,120 @@ async def chat(
             chart_data=result.get("chart_data"),
         )
 
+    except ServiceUnavailableError:
+        await session.rollback()
+        raise HTTPException(status_code=503, detail="Hệ thống AI đang tạm thời bận. Vui lòng thử lại sau ít phút.")
     except Exception as e:
         logger.error(f"Chat error: {e}")
         await session.rollback()
         raise HTTPException(status_code=500, detail="Lỗi xử lý tin nhắn")
 
 
+@router.post("/chat/stream")
+@limiter.limit("30/minute")
+async def chat_stream(
+    request: Request,
+    body: ChatRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> StreamingResponse:
+    """SSE streaming endpoint — two-phase: route+retrieve → stream LLM tokens.
+
+    Events format: data: {json}\\n\\n
+    """
+    session_id = body.session_id or str(uuid.uuid4())
+    logger.info(f"Stream chat request: session={session_id}")
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        try:
+            from sqlalchemy import select as sa_select
+
+            # Fetch conversation history
+            history_result = await session.execute(
+                sa_select(ChatHistory.role, ChatHistory.content)
+                .where(ChatHistory.session_id == session_id)
+                .order_by(ChatHistory.created_at.desc())
+                .limit(5)
+            )
+            conversation_history = [
+                {"role": row.role, "content": row.content}
+                for row in reversed(history_result.all())
+            ]
+
+            # Save user message
+            user_history = ChatHistory(
+                session_id=session_id,
+                role="user",
+                content=body.message,
+            )
+            session.add(user_history)
+            await session.flush()
+
+            supervisor = get_supervisor_agent()
+            accumulated_content = ""
+            final_chart_data = None
+            final_intent = None
+            final_sources: list = []
+
+            async for event in supervisor.process_stream(
+                query=body.message,
+                session_id=session_id,
+                conversation_history=conversation_history,
+            ):
+                event_type = event.get("type")
+
+                if event_type == "meta":
+                    final_intent = event.get("intent")
+                    sources = event.get("sources", [])
+                    if sources:
+                        final_sources = sources
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+                elif event_type == "token":
+                    accumulated_content += event.get("content", "")
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+                elif event_type == "done":
+                    final_chart_data = event.get("chart_data")
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+                elif event_type == "error":
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    await session.rollback()
+                    return
+
+            # Save assistant response to DB
+            assistant_history = ChatHistory(
+                session_id=session_id,
+                role="assistant",
+                content=accumulated_content,
+                chat_metadata=json.dumps({
+                    "intent": final_intent,
+                    "sources": final_sources,
+                }, ensure_ascii=False),
+            )
+            session.add(assistant_history)
+            await session.commit()
+
+        except Exception as e:
+            logger.error(f"Stream error: {e}", exc_info=True)
+            error_event = {"type": "error", "message": "Lỗi xử lý tin nhắn"}
+            yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+            await session.rollback()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Tắt nginx buffering cho SSE
+        },
+    )
+
+
 @router.post("/feedback", response_model=FeedbackResponse)
+@limiter.limit("20/minute")
 async def submit_feedback(
+    http_request: Request,
     request: FeedbackRequest,
     session: AsyncSession = Depends(get_db_session),
 ) -> FeedbackResponse:
@@ -170,10 +302,11 @@ async def get_chat_sessions(
     Returns:
         List of sessions with first user message as title.
     """
-    from sqlalchemy import select, func
+    from sqlalchemy import select, func, text
 
-    # Get all distinct session_ids with their first message and last activity
-    subq = (
+    # Single query: aggregate stats + first user message via DISTINCT ON
+    # Step 1: stats per session
+    stats_subq = (
         select(
             ChatHistory.session_id,
             func.min(ChatHistory.created_at).label("first_at"),
@@ -183,35 +316,55 @@ async def get_chat_sessions(
         .group_by(ChatHistory.session_id)
         .order_by(func.max(ChatHistory.created_at).desc())
         .limit(limit)
-        .subquery()
+        .subquery("stats")
     )
 
-    result = await session.execute(
-        select(subq.c.session_id, subq.c.first_at, subq.c.last_at, subq.c.message_count)
-    )
-    sessions = result.all()
-
-    session_list = []
-    for s in sessions:
-        # Get first user message as title
-        first_msg = await session.execute(
-            select(ChatHistory.content)
-            .where(ChatHistory.session_id == s.session_id)
-            .where(ChatHistory.role == "user")
-            .order_by(ChatHistory.created_at.asc())
-            .limit(1)
+    # Step 2: first user message per session (using row_number window function)
+    row_num = (
+        func.row_number()
+        .over(
+            partition_by=ChatHistory.session_id,
+            order_by=ChatHistory.created_at.asc(),
         )
-        title = first_msg.scalar() or "Cuộc trò chuyện mới"
+        .label("rn")
+    )
+    first_msg_subq = (
+        select(ChatHistory.session_id, ChatHistory.content, row_num)
+        .where(ChatHistory.role == "user")
+        .subquery("first_msgs")
+    )
 
-        session_list.append({
-            "session_id": s.session_id,
-            "title": title[:100],
-            "message_count": s.message_count,
-            "created_at": s.first_at.isoformat(),
-            "updated_at": s.last_at.isoformat(),
-        })
+    # Step 3: join stats with first user message
+    query = (
+        select(
+            stats_subq.c.session_id,
+            stats_subq.c.first_at,
+            stats_subq.c.last_at,
+            stats_subq.c.message_count,
+            first_msg_subq.c.content.label("first_content"),
+        )
+        .join(
+            first_msg_subq,
+            (first_msg_subq.c.session_id == stats_subq.c.session_id)
+            & (first_msg_subq.c.rn == 1),
+            isouter=True,
+        )
+        .order_by(stats_subq.c.last_at.desc())
+    )
 
-    return session_list
+    result = await session.execute(query)
+    rows = result.all()
+
+    return [
+        {
+            "session_id": r.session_id,
+            "title": (r.first_content or "Cuộc trò chuyện mới")[:100],
+            "message_count": r.message_count,
+            "created_at": r.first_at.isoformat(),
+            "updated_at": r.last_at.isoformat(),
+        }
+        for r in rows
+    ]
 
 
 @router.delete("/sessions/{session_id}")
@@ -235,7 +388,9 @@ async def delete_chat_session(
 
 
 @router.get("/history/{session_id}")
+@limiter.limit("60/minute")
 async def get_chat_history(
+    http_request: Request,
     session_id: str,
     limit: int = 50,
     session: AsyncSession = Depends(get_db_session),
@@ -323,7 +478,10 @@ async def websocket_chat(
         websocket: WebSocket connection.
         session_id: Session ID.
     """
+    from src.database.postgres import get_postgres_db
+
     await manager.connect(websocket, session_id)
+    db = get_postgres_db()
 
     try:
         while True:
@@ -342,14 +500,56 @@ async def websocket_chat(
                 "message": "Processing...",
             })
 
-            # Process through supervisor
+            # Process through supervisor + persist to DB
             supervisor = get_supervisor_agent()
 
-            # Stream response if supported
-            result = await supervisor.process(
-                query=message,
-                session_id=session_id,
-            )
+            async with db.get_session() as db_session:
+                try:
+                    from sqlalchemy import select as sa_select
+
+                    # Fetch recent history for context
+                    hist_result = await db_session.execute(
+                        sa_select(ChatHistory.role, ChatHistory.content)
+                        .where(ChatHistory.session_id == session_id)
+                        .order_by(ChatHistory.created_at.desc())
+                        .limit(5)
+                    )
+                    conversation_history = [
+                        {"role": row.role, "content": row.content}
+                        for row in reversed(hist_result.all())
+                    ]
+
+                    # Save user message
+                    user_history = ChatHistory(
+                        session_id=session_id,
+                        role="user",
+                        content=message,
+                    )
+                    db_session.add(user_history)
+                    await db_session.flush()
+
+                    result = await supervisor.process(
+                        query=message,
+                        session_id=session_id,
+                        conversation_history=conversation_history,
+                    )
+
+                    # Save assistant response
+                    assistant_history = ChatHistory(
+                        session_id=session_id,
+                        role="assistant",
+                        content=result.get("response", ""),
+                        chat_metadata=json.dumps({
+                            "intent": result.get("intent"),
+                            "sources": result.get("sources"),
+                        }, ensure_ascii=False),
+                    )
+                    db_session.add(assistant_history)
+                    await db_session.commit()
+
+                except Exception:
+                    await db_session.rollback()
+                    raise
 
             # Send response
             await manager.send_message(session_id, {

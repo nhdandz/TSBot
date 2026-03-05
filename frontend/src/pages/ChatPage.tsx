@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useEffect, useRef, useState } from 'react'
 import { MessageList } from '@/components/chat/MessageList'
 import { ChatInput } from '@/components/chat/ChatInput'
 import { ChatHistory } from '@/components/chat/ChatHistory'
@@ -14,22 +13,26 @@ import {
 } from '@/components/ui/sheet'
 import { RefreshCw, Shield, History, PanelLeftClose, PanelLeft } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
-import type { ChatMessage } from '@/types'
+import type { ChatMessage, Source } from '@/types'
 
 export default function ChatPage() {
   const { toast } = useToast()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [desktopSidebar, setDesktopSidebar] = useState(true)
+  const abortRef = useRef<boolean>(false)
   const {
     messages,
     sessionId,
     isLoading,
     isTyping,
+    streamingContent,
     addMessage,
     setMessages,
     setIsLoading,
     setIsTyping,
     setError,
+    appendStreamingContent,
+    clearStreaming,
     resetSession,
   } = useChatStore()
 
@@ -49,33 +52,6 @@ export default function ChatPage() {
     loadHistory()
   }, [sessionId, setMessages])
 
-  const sendMessageMutation = useMutation({
-    mutationFn: chatService.sendMessage,
-    onSuccess: (data) => {
-      const assistantMessage: ChatMessage = {
-        role: 'assistant',
-        content: data.response,
-        timestamp: data.timestamp,
-        sources: data.sources,
-        intent: data.intent,
-        chart_data: data.chart_data,
-      }
-      addMessage(assistantMessage)
-      setIsLoading(false)
-      setIsTyping(false)
-    },
-    onError: (error: any) => {
-      setIsLoading(false)
-      setIsTyping(false)
-      setError(error.detail || 'Lỗi khi gửi tin nhắn')
-      toast({
-        title: 'Lỗi',
-        description: error.detail || 'Không thể gửi tin nhắn. Vui lòng thử lại.',
-        variant: 'destructive',
-      })
-    },
-  })
-
   const handleSendMessage = async (content: string) => {
     const userMessage: ChatMessage = {
       role: 'user',
@@ -85,11 +61,56 @@ export default function ChatPage() {
     addMessage(userMessage)
     setIsLoading(true)
     setIsTyping(true)
+    clearStreaming()
+    abortRef.current = false
 
-    sendMessageMutation.mutate({
-      message: content,
-      session_id: sessionId,
-    })
+    let finalIntent: string | undefined
+    let finalSources: Source[] = []
+    let finalChartData: any = undefined
+
+    try {
+      for await (const event of chatService.sendMessageStream({
+        message: content,
+        session_id: sessionId,
+      })) {
+        if (abortRef.current) break
+
+        if (event.type === 'meta') {
+          finalIntent = event.intent
+          if (event.sources?.length) finalSources = event.sources
+          setIsTyping(false)
+        } else if (event.type === 'token') {
+          appendStreamingContent(event.content ?? '')
+        } else if (event.type === 'done') {
+          finalChartData = event.chart_data
+        } else if (event.type === 'error') {
+          throw new Error(event.message ?? 'Lỗi streaming')
+        }
+      }
+
+      // Commit streaming content as final message
+      const finalContent = useChatStore.getState().streamingContent
+      const assistantMessage: ChatMessage = {
+        role: 'assistant',
+        content: finalContent,
+        timestamp: new Date().toISOString(),
+        sources: finalSources,
+        intent: finalIntent,
+        chart_data: finalChartData,
+      }
+      addMessage(assistantMessage)
+    } catch (error: any) {
+      setError(error.message || 'Lỗi khi gửi tin nhắn')
+      toast({
+        title: 'Lỗi',
+        description: error.message || 'Không thể gửi tin nhắn. Vui lòng thử lại.',
+        variant: 'destructive',
+      })
+    } finally {
+      clearStreaming()
+      setIsLoading(false)
+      setIsTyping(false)
+    }
   }
 
   const handleResetChat = () => {
@@ -188,6 +209,7 @@ export default function ChatPage() {
           <MessageList
             messages={messages}
             isTyping={isTyping}
+            streamingContent={streamingContent}
             onSuggestionClick={handleSendMessage}
           />
           <ChatInput

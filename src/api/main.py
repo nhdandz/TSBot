@@ -92,6 +92,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Auto-load chunks failed", error=str(e))
 
+    # Preload Redis cache → warm up RAM cosine-similarity cache
+    if settings.use_semantic_cache and getattr(settings, "use_redis_cache", False):
+        from src.agents.components.cache import SemanticCache
+        try:
+            cache = SemanticCache()
+            await cache.preload_from_redis()
+        except Exception as e:
+            logger.warning("Redis cache preload failed", error=str(e))
+
     yield
 
     logger.info("Shutting down TSBot application")
@@ -163,6 +172,7 @@ async def health_check():
             "main_model": "ready" if llm_status.get("main_model") else "not_loaded",
             "grader_model": "ready" if llm_status.get("grader_model") else "not_loaded",
             "embeddings": "up" if embed_ok else "down",
+            "vllm_circuit_breaker": llm._circuit_breaker.state,
         },
     }
 

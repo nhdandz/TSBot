@@ -58,6 +58,9 @@ dependencies = [
 
     # Rate limiting
     "slowapi>=0.1.9",
+
+    # Redis (semantic cache persistent backend)
+    "redis>=5.0.0",
 ]
 
 [project.optional-dependencies]

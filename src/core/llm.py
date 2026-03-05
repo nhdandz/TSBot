@@ -5,7 +5,8 @@ Dùng ChatOpenAI từ langchain-openai để giao tiếp.
 """
 
 import logging
-from typing import Any, AsyncGenerator, Optional
+import time
+from typing import Any, AsyncGenerator, Literal, Optional
 
 import httpx
 from langchain_openai import ChatOpenAI
@@ -14,6 +15,50 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from src.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+class ServiceUnavailableError(Exception):
+    """vLLM server không khả dụng (circuit breaker open)."""
+
+
+class CircuitBreaker:
+    """Circuit breaker cho vLLM requests."""
+
+    FAILURE_THRESHOLD = 5
+    RECOVERY_TIMEOUT = 60  # seconds
+
+    def __init__(self):
+        self.state: Literal["closed", "open", "half_open"] = "closed"
+        self.failure_count: int = 0
+        self.last_failure_time: float = 0.0
+
+    def can_attempt(self) -> bool:
+        if self.state == "closed":
+            return True
+        if self.state == "open":
+            if time.time() - self.last_failure_time > self.RECOVERY_TIMEOUT:
+                self.state = "half_open"
+                logger.info("Circuit breaker → half_open (trying recovery)")
+                return True
+            return False
+        return True  # half_open: cho phép 1 thử
+
+    def record_success(self):
+        if self.state != "closed":
+            logger.info(f"Circuit breaker → closed (recovered from {self.state})")
+        self.state = "closed"
+        self.failure_count = 0
+
+    def record_failure(self):
+        self.failure_count += 1
+        self.last_failure_time = time.time()
+        if self.failure_count >= self.FAILURE_THRESHOLD:
+            if self.state != "open":
+                logger.error(f"Circuit breaker → open ({self.failure_count} failures)")
+            self.state = "open"
+        elif self.state == "half_open":
+            self.state = "open"
+            logger.warning("Circuit breaker → open (half_open attempt failed)")
 
 
 class LLMService:
@@ -31,6 +76,7 @@ class LLMService:
 
         self._main_llm: Optional[ChatOpenAI] = None
         self._grader_llm: Optional[ChatOpenAI] = None
+        self._circuit_breaker = CircuitBreaker()
 
     def _make_llm(self, model: str, temperature: float, top_p: Optional[float] = None) -> ChatOpenAI:
         """Tạo ChatOpenAI instance trỏ vào vLLM server."""
@@ -91,6 +137,9 @@ class LLMService:
         """Gọi LLM và trả về text response."""
         import re
 
+        if not self._circuit_breaker.can_attempt():
+            raise ServiceUnavailableError("vLLM không khả dụng (circuit breaker open)")
+
         llm = self.grader_llm if use_grader else self.main_llm
 
         messages = []
@@ -98,7 +147,13 @@ class LLMService:
             messages.append(("system", system_prompt))
         messages.append(("human", prompt))
 
-        response = await llm.ainvoke(messages, **kwargs)
+        try:
+            response = await llm.ainvoke(messages, **kwargs)
+            self._circuit_breaker.record_success()
+        except Exception as e:
+            self._circuit_breaker.record_failure()
+            raise
+
         content = response.content
 
         # Loại bỏ thinking tags (qwen3, deepseek-r1 và các reasoning models)
@@ -115,6 +170,9 @@ class LLMService:
         **kwargs: Any,
     ) -> AsyncGenerator[str, None]:
         """Stream generate responses từ LLM."""
+        if not self._circuit_breaker.can_attempt():
+            raise ServiceUnavailableError("vLLM không khả dụng (circuit breaker open)")
+
         llm = self.grader_llm if use_grader else self.main_llm
 
         messages = []
@@ -122,9 +180,17 @@ class LLMService:
             messages.append(("system", system_prompt))
         messages.append(("human", prompt))
 
-        async for chunk in llm.astream(messages, **kwargs):
-            if hasattr(chunk, "content") and chunk.content:
-                yield chunk.content
+        first_token = True
+        try:
+            async for chunk in llm.astream(messages, **kwargs):
+                if hasattr(chunk, "content") and chunk.content:
+                    if first_token:
+                        self._circuit_breaker.record_success()
+                        first_token = False
+                    yield chunk.content
+        except Exception as e:
+            self._circuit_breaker.record_failure()
+            raise
 
     async def generate_with_json(
         self,

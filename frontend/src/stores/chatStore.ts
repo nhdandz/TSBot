@@ -14,6 +14,7 @@ interface ChatState {
   isLoading: boolean
   isTyping: boolean
   error: string | null
+  streamingContent: string
 
   // Actions
   addMessage: (message: ChatMessage) => void
@@ -24,6 +25,9 @@ interface ChatState {
   clearMessages: () => void
   resetSession: () => void
   setSessionId: (sessionId: string) => void
+  setStreamingContent: (content: string) => void
+  appendStreamingContent: (chunk: string) => void
+  clearStreaming: () => void
 }
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -32,6 +36,7 @@ export const useChatStore = create<ChatState>((set) => ({
   isLoading: false,
   isTyping: false,
   error: null,
+  streamingContent: '',
 
   addMessage: (message) =>
     set((state) => ({
@@ -64,5 +69,13 @@ export const useChatStore = create<ChatState>((set) => ({
       isLoading: false,
       isTyping: false,
       error: null,
+      streamingContent: '',
     }),
+
+  setStreamingContent: (content) => set({ streamingContent: content }),
+
+  appendStreamingContent: (chunk) =>
+    set((state) => ({ streamingContent: state.streamingContent + chunk })),
+
+  clearStreaming: () => set({ streamingContent: '' }),
 }))

@@ -8,6 +8,7 @@ import { ChartMessage } from './ChartMessage'
 interface MessageListProps {
   messages: ChatMessage[]
   isTyping?: boolean
+  streamingContent?: string
   onSuggestionClick?: (question: string) => void
 }
 
@@ -17,7 +18,7 @@ const suggestions = [
   'Hồ sơ tuyển sinh cần những gì?',
 ]
 
-export function MessageList({ messages, isTyping, onSuggestionClick }: MessageListProps) {
+export function MessageList({ messages, isTyping, streamingContent, onSuggestionClick }: MessageListProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -26,7 +27,7 @@ export function MessageList({ messages, isTyping, onSuggestionClick }: MessageLi
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages, isTyping])
+  }, [messages, isTyping, streamingContent])
 
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
@@ -102,7 +103,25 @@ export function MessageList({ messages, isTyping, onSuggestionClick }: MessageLi
         </div>
       ))}
 
-      {isTyping && (
+      {/* Streaming bubble — hiển thị token realtime trước khi commit vào messages */}
+      {streamingContent && (
+        <div className="animate-message-in flex gap-3 justify-start">
+          <div className="flex-shrink-0 mt-1">
+            <div className="w-7 h-7 rounded-lg bg-gradient-military flex items-center justify-center shadow-soft-sm">
+              <Bot className="w-4 h-4 text-white" />
+            </div>
+          </div>
+          <div className="flex flex-col max-w-[88%] items-start">
+            <div className="px-4 py-3 rounded-2xl rounded-tl-md bg-card border border-border/40 shadow-message">
+              <MarkdownContent content={streamingContent} />
+              <span className="inline-block w-0.5 h-4 bg-primary ml-0.5 animate-pulse align-middle" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Typing dots — chỉ hiện khi chưa có streaming content */}
+      {isTyping && !streamingContent && (
         <div className="animate-message-in flex gap-3 justify-start">
           <div className="flex-shrink-0 mt-1">
             <div className="w-7 h-7 rounded-lg bg-gradient-military flex items-center justify-center shadow-soft-sm">

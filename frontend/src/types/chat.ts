@@ -83,6 +83,16 @@ export interface ChatSession {
   updated_at: string
 }
 
+// SSE streaming event types
+export interface SSEEvent {
+  type: 'meta' | 'token' | 'done' | 'error'
+  intent?: string
+  sources?: Source[]
+  content?: string
+  chart_data?: ChartData
+  message?: string
+}
+
 // WebSocket message types
 export interface WSMessage {
   type: 'ack' | 'response' | 'error' | 'stream'

@@ -4,6 +4,7 @@ const ANALYTICS_BASE = `${API_BASE}/analytics`
 
 export const API_ENDPOINTS = {
   chat: `${API_BASE}/chat`,
+  chatStream: `${API_BASE}/chat/stream`,
   feedback: `${API_BASE}/feedback`,
   sessions: `${API_BASE}/sessions`,
   deleteSession: (sessionId: string) => `${API_BASE}/sessions/${sessionId}`,

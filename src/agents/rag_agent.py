@@ -137,6 +137,7 @@ class RAGAgent:
         self,
         query: str,
         context: Optional[dict] = None,
+        stream: bool = False,
     ) -> Dict[str, Any]:
         """Process a query using the 10-step Advanced RAG pipeline.
 
@@ -238,9 +239,22 @@ class RAGAgent:
         context_text = build_multi_chunk_context(merged, query, query_embedding, ctx_settings)
         logger.info(f"[RAG] Step 8: Context built ({len(context_text)} chars)")
 
+        sources = self._format_sources(merged)
+
+        # Stream mode: skip LLM answer generation, return context for supervisor streaming
+        if stream:
+            logger.info(f"[RAG] Stream mode: returning context ({len(context_text)} chars) for supervisor")
+            return {
+                "query": query,
+                "context": context_text,
+                "sources": sources,
+                "intent": intent,
+                "documents_retrieved": len(candidates),
+                "documents_relevant": len(merged),
+            }
+
         # Step 9: Generate Answer
         answer = await self._generate_answer(query, context_text, intent)
-        sources = self._format_sources(merged)
         logger.info(f"[RAG] Step 9: Answer generated ({len(answer)} chars)")
 
         result = {
