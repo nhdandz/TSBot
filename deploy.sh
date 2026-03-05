@@ -38,7 +38,8 @@ git pull origin main
 
 echo ""
 echo "=== [2/5] Rebuild images ==="
-$COMPOSE build tsbot-api nginx
+# --pull=never: dùng base images đã có local, không fetch lại từ Docker Hub
+$COMPOSE build --pull=never tsbot-api nginx
 
 echo ""
 echo "=== [3/5] Restart services ==="
