@@ -57,6 +57,20 @@ INTENT_INSTRUCTIONS = {
     "general": "Trả lời tổng quan các khía cạnh liên quan.",
 }
 
+# Faithfulness verification prompt
+FAITHFULNESS_CHECK_PROMPT = """Kiểm tra xem câu trả lời có được hỗ trợ bởi ngữ cảnh cho sẵn hay không.
+
+Ngữ cảnh:
+{context}
+
+Câu trả lời cần kiểm tra:
+{answer}
+
+Đánh giá mức độ câu trả lời được hỗ trợ bởi ngữ cảnh (0.0 = hoàn toàn bịa đặt, 1.0 = hoàn toàn dựa trên ngữ cảnh).
+
+Trả về JSON: {{"faithful": true/false, "score": 0.0-1.0, "reason": "lý do ngắn"}}"""
+
+
 # LLM Reranking prompt
 LLM_RERANK_PROMPT = """Đánh giá mức độ liên quan của đoạn văn bản sau với câu hỏi.
 
@@ -257,6 +271,16 @@ class RAGAgent:
         answer = await self._generate_answer(query, context_text, intent)
         logger.info(f"[RAG] Step 9: Answer generated ({len(answer)} chars)")
 
+        # Step 9.5: Faithfulness verification
+        faith_score = await self._verify_faithfulness(answer, context_text)
+        if faith_score < 0.5:
+            logger.warning(f"[RAG] Low faithfulness score ({faith_score:.2f}) — appending disclaimer")
+            answer = (
+                answer
+                + "\n\n> ⚠️ *Lưu ý: Câu trả lời này có thể chứa thông tin ngoài phạm vi tài liệu. "
+                "Vui lòng xác nhận với cơ quan tuyển sinh có thẩm quyền.*"
+            )
+
         result = {
             "query": query,
             "answer": answer,
@@ -421,6 +445,32 @@ class RAGAgent:
 
         scored.sort(key=lambda x: x.get("_rerank_score", 0), reverse=True)
         return scored[:top_k]
+
+    async def _verify_faithfulness(self, answer: str, context: str) -> float:
+        """Verify that answer is grounded in the retrieved context.
+
+        Uses grader LLM to score faithfulness (0.0 = hallucination, 1.0 = faithful).
+        Falls back to 0.8 (assume faithful) on error to avoid false positives.
+
+        Args:
+            answer: Generated answer to verify.
+            context: Retrieved context used to generate the answer.
+
+        Returns:
+            Faithfulness score between 0.0 and 1.0.
+        """
+        try:
+            prompt = FAITHFULNESS_CHECK_PROMPT.format(
+                context=context[:1500],
+                answer=answer[:800],
+            )
+            result = await self.llm_service.generate_with_json(prompt=prompt, use_grader=True)
+            score = float(result.get("score", 0.8))
+            logger.debug(f"[RAG] Faithfulness score={score:.2f}, reason={result.get('reason', '')}")
+            return max(0.0, min(1.0, score))
+        except Exception as e:
+            logger.warning(f"[RAG] Faithfulness check failed: {e}")
+            return 0.8  # Default: assume faithful on error
 
     async def _generate_answer(
         self,

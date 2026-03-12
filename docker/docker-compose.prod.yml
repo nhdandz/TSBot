@@ -57,9 +57,11 @@ services:
       - DEBUG=false
       - LOG_LEVEL=${LOG_LEVEL:-info}
       # Số worker = số lần BAAI/bge-m3 (~2.5GB) load lên GPU
-      # GPU 16GB: tối đa 3 workers an toàn. GPU 8GB: giữ 1.
-      # Default 1 để an toàn — tăng trong .env.production nếu GPU đủ VRAM
-      - API_WORKERS=${API_WORKERS:-1}
+      # GPU 16GB: tối đa 3 workers an toàn (3 × 2.5GB = 7.5GB VRAM).
+      # GPU 8GB: giữ 1. Default 2 cho GPU 16GB — cân bằng throughput vs VRAM.
+      # Khi tăng workers, PHẢI giảm POSTGRES_POOL_SIZE để tránh vượt max_connections PG.
+      # Công thức: API_WORKERS × POSTGRES_POOL_SIZE ≤ 80 (giữ buffer cho PG)
+      - API_WORKERS=${API_WORKERS:-2}
 
       # vLLM server (máy A100 riêng biệt)
       - VLLM_BASE_URL=${VLLM_BASE_URL}
@@ -81,8 +83,9 @@ services:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_POOL_SIZE=${POSTGRES_POOL_SIZE:-20}
-      - POSTGRES_MAX_OVERFLOW=${POSTGRES_MAX_OVERFLOW:-40}
+      # Pool per worker: 2 workers × (10+10) = 40 connections → an toàn với PG max_connections=100
+      - POSTGRES_POOL_SIZE=${POSTGRES_POOL_SIZE:-10}
+      - POSTGRES_MAX_OVERFLOW=${POSTGRES_MAX_OVERFLOW:-10}
 
       # Qdrant
       - QDRANT_HOST=qdrant
@@ -181,10 +184,13 @@ services:
     restart: unless-stopped
     command: >
       redis-server
-      --maxmemory 512mb
+      --maxmemory 1gb
       --maxmemory-policy allkeys-lru
       --save 60 1
       --appendonly no
+      --tcp-backlog 512
+      --tcp-keepalive 300
+      --lazyfree-lazy-eviction yes
     volumes:
       - redis_data:/data
     healthcheck:
@@ -195,8 +201,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.5"
-          memory: 600M
+          cpus: "1.0"
+          memory: 1.2G
     networks:
       - tsbot-network
 

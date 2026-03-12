@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import settings
-from src.database.models import DiemChuan, KhoiThi, Nganh, Truong, User
+from src.database.models import DiemChuan, FlaggedConversation, KhoiThi, Nganh, Truong, User
 from src.database.postgres import get_db_session
 
 from src.api._limiter import limiter
@@ -1121,4 +1121,124 @@ async def get_stats(
         "recent_chats": 0,
         "latest_year": latest_year,
     }
+
+
+# ── Human-in-the-Loop: Flagged Conversations ────────────────────────────────
+
+
+class ReviewFlagRequest(BaseModel):
+    """Request to review/update a flagged conversation."""
+
+    status: str = Field(..., pattern="^(reviewed|resolved|dismissed)$")
+    admin_note: Optional[str] = Field(None, max_length=2000)
+
+
+@router.get("/flagged")
+async def list_flagged_conversations(
+    flag_status: str = "pending",
+    flag_reason: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> list[dict]:
+    """List flagged conversations pending human review.
+
+    Args:
+        flag_status: Filter by status (pending/reviewed/resolved/dismissed).
+        flag_reason: Filter by reason (user_reported/low_confidence/faithfulness_fail/error).
+        limit: Max results.
+        offset: Pagination offset.
+
+    Returns:
+        List of flagged conversation records.
+    """
+    from sqlalchemy import and_
+
+    conditions = [FlaggedConversation.status == flag_status]
+    if flag_reason:
+        conditions.append(FlaggedConversation.flag_reason == flag_reason)
+
+    result = await session.execute(
+        select(FlaggedConversation)
+        .where(and_(*conditions))
+        .order_by(FlaggedConversation.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    rows = result.scalars().all()
+
+    return [
+        {
+            "id": r.id,
+            "session_id": r.session_id,
+            "message_id": r.message_id,
+            "question": r.question,
+            "answer": r.answer,
+            "flag_reason": r.flag_reason,
+            "status": r.status,
+            "admin_note": r.admin_note,
+            "reviewed_by": r.reviewed_by,
+            "created_at": r.created_at.isoformat(),
+            "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.patch("/flagged/{flag_id}")
+async def review_flagged_conversation(
+    flag_id: int,
+    body: ReviewFlagRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Review and update status of a flagged conversation.
+
+    Args:
+        flag_id: ID of flagged conversation.
+        body: Review data with new status and optional note.
+
+    Returns:
+        Updated record summary.
+    """
+    result = await session.execute(
+        select(FlaggedConversation).where(FlaggedConversation.id == flag_id)
+    )
+    flag = result.scalar_one_or_none()
+
+    if flag is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy bản ghi")
+
+    flag.status = body.status
+    flag.admin_note = body.admin_note
+    flag.reviewed_by = current_user.username
+    flag.reviewed_at = datetime.utcnow()
+    await session.commit()
+
+    return {"success": True, "id": flag_id, "status": flag.status}
+
+
+@router.get("/flagged/summary")
+async def flagged_summary(
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Summary counts of flagged conversations by status and reason."""
+    result = await session.execute(
+        select(
+            FlaggedConversation.status,
+            FlaggedConversation.flag_reason,
+            func.count(FlaggedConversation.id).label("count"),
+        ).group_by(FlaggedConversation.status, FlaggedConversation.flag_reason)
+    )
+    rows = result.all()
+
+    summary: dict[str, Any] = {"by_status": {}, "by_reason": {}, "total": 0}
+    for row in rows:
+        summary["by_status"][row.status] = summary["by_status"].get(row.status, 0) + row.count
+        summary["by_reason"][row.flag_reason] = summary["by_reason"].get(row.flag_reason, 0) + row.count
+        summary["total"] += row.count
+
+    return summary
 

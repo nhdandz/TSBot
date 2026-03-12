@@ -3,6 +3,7 @@
 import json
 import logging
 import operator
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Annotated, Any, AsyncGenerator, Optional, TypedDict
@@ -211,6 +212,7 @@ class SupervisorAgent:
         workflow.add_node("route", self._route_node)
         workflow.add_node("sql_agent", self._sql_node)
         workflow.add_node("rag_agent", self._rag_node)
+        workflow.add_node("hybrid_agent", self._hybrid_node)
         workflow.add_node("general", self._general_node)
         workflow.add_node("school_info", self._school_info_node)
         workflow.add_node("combine", self._combine_node)
@@ -229,20 +231,22 @@ class SupervisorAgent:
                 "general": "general",
                 "school_info": "school_info",
                 "clarify": "clarify",
-                "both": "sql_agent",  # Start with SQL when both needed
+                "both": "hybrid_agent",  # Hybrid: run SQL + RAG in parallel
             },
         )
 
-        # SQL agent can lead to RAG or end
+        # SQL agent can end or fallback to RAG on empty results
         workflow.add_conditional_edges(
             "sql_agent",
             self._after_sql,
             {
                 "rag": "rag_agent",
-                "combine": "combine",
                 "end": END,
             },
         )
+
+        # Hybrid agent always goes to combine
+        workflow.add_edge("hybrid_agent", "combine")
 
         # School info can end or fallback to RAG
         workflow.add_conditional_edges(
@@ -481,6 +485,51 @@ class SupervisorAgent:
                 "error": str(e),
             }
 
+    async def _hybrid_node(self, state: ConversationState) -> dict:
+        """Execute SQL Agent and RAG Agent in parallel for hybrid queries.
+
+        Args:
+            state: Current state.
+
+        Returns:
+            Updated state with both SQL and RAG results.
+        """
+        import asyncio as _asyncio
+
+        query = state["current_query"]
+        logger.info(f"Hybrid node: running SQL + RAG in parallel for '{query[:50]}'")
+
+        sql_task = _asyncio.create_task(self.sql_agent.process_query(query))
+        rag_task = _asyncio.create_task(self.rag_agent.process_query(query))
+        results = await _asyncio.gather(sql_task, rag_task, return_exceptions=True)
+
+        sql_result = results[0] if not isinstance(results[0], Exception) else {"error": str(results[0])}
+        rag_result = results[1] if not isinstance(results[1], Exception) else {"error": str(results[1])}
+
+        if isinstance(results[0], Exception):
+            logger.error(f"Hybrid SQL error: {results[0]}")
+        if isinstance(results[1], Exception):
+            logger.error(f"Hybrid RAG error: {results[1]}")
+
+        # Apply low-confidence disclaimer to RAG result
+        sources = rag_result.get("sources", [])
+        rag_answer = rag_result.get("answer", "")
+        if rag_answer and sources:
+            max_score = max((s.get("score", 1.0) for s in sources if isinstance(s, dict)), default=1.0)
+            if max_score < 0.60:
+                rag_result["answer"] = (
+                    rag_answer
+                    + "\n\n> ⚠️ *Lưu ý: Thông tin trên có thể chưa đầy đủ hoặc chưa được cập nhật. "
+                    "Vui lòng xác nhận lại với cơ quan tuyển sinh hoặc trực tiếp nhà trường có thẩm quyền.*"
+                )
+
+        return {
+            "sql_result": sql_result,
+            "rag_result": rag_result,
+            "sources": sources,
+            "chart_data": sql_result.get("chart_data"),
+        }
+
     def _after_sql(self, state: ConversationState) -> str:
         """Decide what to do after SQL agent.
 
@@ -496,15 +545,12 @@ class SupervisorAgent:
         if sql_result.get("results"):
             return "end"
 
-        # SQL returned no results - only fallback to RAG if the intent
-        # was originally ambiguous (routed as "both"). Otherwise, the user
-        # asked a data question and RAG will give irrelevant legal text.
+        # SQL returned no results - fallback to RAG if intent suggested it
         intent = state.get("intent", "")
-        if intent in ("both", "rag"):
+        if intent == "rag":
             return "rag"
 
         # For pure SQL queries with no results, end with SQL's own message
-        # (e.g. "Không tìm thấy dữ liệu phù hợp")
         return "end"
 
     async def _rag_node(self, state: ConversationState) -> dict:
@@ -581,12 +627,9 @@ class SupervisorAgent:
             query_normalized = VietnameseTextProcessor.normalize_text(query_expanded)
             logger.debug(f"school_info: collapsed='{query_collapsed}', normalized='{query_normalized}'")
 
-            # Fetch all active schools and match against query
+            # Fetch all active schools (cached 1h để tránh query lặp)
             db = get_postgres_db()
-            all_schools = await db.fetch_all(
-                "SELECT id, ma_truong, ten_truong, ten_khong_dau, loai_truong, dia_chi, website, mo_ta "
-                "FROM truong WHERE active = true"
-            )
+            all_schools = await _get_cached_schools(db)
 
             # Prepare normalized names, use ma_truong as abbreviation from DB
             query_lower = query.lower().strip()
@@ -925,8 +968,48 @@ class SupervisorAgent:
                 yield {"type": "done", "chart_data": None}
                 return
 
+            if intent == "both":
+                # Hybrid: run SQL + RAG in parallel, then stream combined answer
+                import asyncio as _asyncio
+                sql_task = _asyncio.create_task(self.sql_agent.process_query(resolved_query, stream=True))
+                rag_task = _asyncio.create_task(self.rag_agent.process_query(resolved_query, stream=True))
+                hybrid_results = await _asyncio.gather(sql_task, rag_task, return_exceptions=True)
+
+                sql_raw = hybrid_results[0] if not isinstance(hybrid_results[0], Exception) else {}
+                rag_raw = hybrid_results[1] if not isinstance(hybrid_results[1], Exception) else {}
+
+                sources = rag_raw.get("sources", [])
+                yield {"type": "meta", "intent": intent, "sources": sources}
+
+                sql_results = sql_raw.get("raw_results") or []
+                rag_context = rag_raw.get("context", "") or rag_raw.get("answer", "")
+
+                parts = []
+                if sql_results:
+                    table = self.sql_agent._build_markdown_table(sql_results)
+                    parts.append(f"## Dữ liệu điểm chuẩn:\n{table}")
+                if rag_context:
+                    parts.append(f"## Quy định liên quan:\n{rag_context[:2000]}")
+
+                if not parts:
+                    yield {"type": "token", "content": "Không tìm thấy thông tin phù hợp với yêu cầu của bạn."}
+                    yield {"type": "done", "chart_data": None}
+                    return
+
+                combined = "\n\n".join(parts)
+                hybrid_prompt = (
+                    f"Dựa trên thông tin sau, trả lời câu hỏi đầy đủ bằng tiếng Việt. "
+                    f"Kết hợp cả số liệu và quy định một cách logic:\n\n"
+                    f"{combined}\n\n"
+                    f"Câu hỏi: {query}"
+                )
+                async for token in self.llm_service.generate_stream(prompt=hybrid_prompt):
+                    yield {"type": "token", "content": token}
+                yield {"type": "done", "chart_data": sql_raw.get("chart_data")}
+                return
+
             if agent_type == AgentType.SQL:
-                sql_raw = await self.sql_agent.process_query(query, stream=True)
+                sql_raw = await self.sql_agent.process_query(resolved_query, stream=True)
                 results = sql_raw.get("raw_results") or []
                 entities = sql_raw.get("entities", {})
                 chart_data = sql_raw.get("chart_data")
@@ -1001,6 +1084,28 @@ class SupervisorAgent:
         except Exception as e:
             logger.error(f"process_stream error: {e}", exc_info=True)
             yield {"type": "error", "message": "Đã xảy ra lỗi khi xử lý yêu cầu. Vui lòng thử lại."}
+
+
+# ── Schools cache (tránh fetch toàn bộ trường mỗi request) ──────────────────
+_schools_cache: Optional[list] = None
+_schools_cache_ts: float = 0.0
+_SCHOOLS_CACHE_TTL = 3600.0  # 1 giờ
+
+
+async def _get_cached_schools(db) -> list:
+    """Fetch all active schools với in-process cache TTL 1h."""
+    global _schools_cache, _schools_cache_ts
+    now = time.monotonic()
+    if _schools_cache is not None and (now - _schools_cache_ts) < _SCHOOLS_CACHE_TTL:
+        return _schools_cache
+    schools = await db.fetch_all(
+        "SELECT id, ma_truong, ten_truong, ten_khong_dau, loai_truong, dia_chi, website, mo_ta "
+        "FROM truong WHERE active = true"
+    )
+    _schools_cache = schools
+    _schools_cache_ts = now
+    logger.info(f"Schools cache refreshed: {len(schools)} trường")
+    return schools
 
 
 # Factory function

@@ -4,6 +4,7 @@ import ast
 import asyncio
 import json
 import logging
+import re
 import uuid
 from datetime import datetime
 from typing import Any, AsyncGenerator, Optional
@@ -16,11 +17,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.agents.supervisor import get_supervisor_agent
 from src.api._limiter import limiter
 from src.core.llm import ServiceUnavailableError
-from src.database.models import ChatHistory, Feedback
+from src.database.models import ChatHistory, Feedback, FlaggedConversation
 from src.database.postgres import get_db_session
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Prompt injection patterns (case-insensitive)
+_INJECTION_PATTERNS = [
+    r"ignore\s+(all\s+)?(previous|above|prior)\s+(instructions?|prompts?|rules?|directives?)",
+    r"forget\s+(all|everything|your\s+(instructions?|rules?|training))",
+    r"you\s+are\s+now\s+",
+    r"act\s+as\s+(a\s+)?(different|new|another|evil|malicious|unrestricted|jailbreak)",
+    r"\bjailbreak\b",
+    r"\bdan\s+mode\b",
+    r"bypass\s+(your\s+)?(safety|guidelines|restrictions?|filters?|alignment)",
+    r"system\s+prompt\s*:",
+    r"</?(system|assistant|user|human)\s*>",
+    r"<\|im_(start|end)\|>",
+    r"\[INST\]|\[/INST\]",
+]
+_INJECTION_RE = re.compile("|".join(_INJECTION_PATTERNS), re.IGNORECASE)
+
+
+def _detect_prompt_injection(message: str) -> bool:
+    """Return True if message contains suspected prompt injection."""
+    return bool(_INJECTION_RE.search(message))
 
 
 # Request/Response Models
@@ -78,6 +100,11 @@ async def chat(
     """
     # Generate session ID if not provided
     session_id = body.session_id or str(uuid.uuid4())
+
+    # Prompt injection guard
+    if _detect_prompt_injection(body.message):
+        logger.warning(f"Prompt injection attempt blocked: session={session_id}")
+        raise HTTPException(status_code=400, detail="Tin nhắn chứa nội dung không hợp lệ.")
 
     logger.info(f"Chat request: session={session_id}")
 
@@ -156,46 +183,62 @@ async def chat(
 async def chat_stream(
     request: Request,
     body: ChatRequest,
-    session: AsyncSession = Depends(get_db_session),
 ) -> StreamingResponse:
     """SSE streaming endpoint — two-phase: route+retrieve → stream LLM tokens.
+
+    DB session được mở/đóng riêng biệt để tránh giữ connection pool
+    suốt thời gian stream LLM (có thể kéo dài 20-60s mỗi request).
 
     Events format: data: {json}\\n\\n
     """
     session_id = body.session_id or str(uuid.uuid4())
+
+    # Prompt injection guard
+    if _detect_prompt_injection(body.message):
+        logger.warning(f"Prompt injection attempt blocked (stream): session={session_id}")
+        raise HTTPException(status_code=400, detail="Tin nhắn chứa nội dung không hợp lệ.")
+
     logger.info(f"Stream chat request: session={session_id}")
 
     async def event_generator() -> AsyncGenerator[str, None]:
+        from src.database.postgres import get_postgres_db
+        from sqlalchemy import select as sa_select
+
+        db = get_postgres_db()
+
+        # Phase 1: DB read + save user message — giữ connection ngắn nhất có thể
+        conversation_history: list = []
         try:
-            from sqlalchemy import select as sa_select
+            async with db.get_session() as session:
+                history_result = await session.execute(
+                    sa_select(ChatHistory.role, ChatHistory.content)
+                    .where(ChatHistory.session_id == session_id)
+                    .order_by(ChatHistory.created_at.desc())
+                    .limit(5)
+                )
+                conversation_history = [
+                    {"role": row.role, "content": row.content}
+                    for row in reversed(history_result.all())
+                ]
+                session.add(ChatHistory(
+                    session_id=session_id,
+                    role="user",
+                    content=body.message,
+                ))
+                # commit() tự động khi ra khỏi context manager → trả connection về pool
+        except Exception as e:
+            logger.error(f"Stream DB read error: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Lỗi đọc lịch sử hội thoại'}, ensure_ascii=False)}\n\n"
+            return
 
-            # Fetch conversation history
-            history_result = await session.execute(
-                sa_select(ChatHistory.role, ChatHistory.content)
-                .where(ChatHistory.session_id == session_id)
-                .order_by(ChatHistory.created_at.desc())
-                .limit(5)
-            )
-            conversation_history = [
-                {"role": row.role, "content": row.content}
-                for row in reversed(history_result.all())
-            ]
+        # Phase 2: Stream LLM — KHÔNG giữ DB connection
+        supervisor = get_supervisor_agent()
+        accumulated_content = ""
+        final_chart_data = None
+        final_intent = None
+        final_sources: list = []
 
-            # Save user message
-            user_history = ChatHistory(
-                session_id=session_id,
-                role="user",
-                content=body.message,
-            )
-            session.add(user_history)
-            await session.flush()
-
-            supervisor = get_supervisor_agent()
-            accumulated_content = ""
-            final_chart_data = None
-            final_intent = None
-            final_sources: list = []
-
+        try:
             async for event in supervisor.process_stream(
                 query=body.message,
                 session_id=session_id,
@@ -220,27 +263,28 @@ async def chat_stream(
 
                 elif event_type == "error":
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                    await session.rollback()
                     return
 
-            # Save assistant response to DB
-            assistant_history = ChatHistory(
-                session_id=session_id,
-                role="assistant",
-                content=accumulated_content,
-                chat_metadata=json.dumps({
-                    "intent": final_intent,
-                    "sources": final_sources,
-                }, ensure_ascii=False),
-            )
-            session.add(assistant_history)
-            await session.commit()
-
         except Exception as e:
-            logger.error(f"Stream error: {e}", exc_info=True)
-            error_event = {"type": "error", "message": "Lỗi xử lý tin nhắn"}
-            yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
-            await session.rollback()
+            logger.error(f"Stream LLM error: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Lỗi xử lý tin nhắn'}, ensure_ascii=False)}\n\n"
+            return
+
+        # Phase 3: Save assistant response — mở connection mới, đóng ngay sau khi xong
+        if accumulated_content:
+            try:
+                async with db.get_session() as session:
+                    session.add(ChatHistory(
+                        session_id=session_id,
+                        role="assistant",
+                        content=accumulated_content,
+                        chat_metadata=json.dumps({
+                            "intent": final_intent,
+                            "sources": final_sources,
+                        }, ensure_ascii=False),
+                    ))
+            except Exception as e:
+                logger.error(f"Stream DB save error: {e}", exc_info=True)
 
     return StreamingResponse(
         event_generator(),
@@ -277,6 +321,47 @@ async def submit_feedback(
             comment=body.comment,
         )
         session.add(feedback)
+
+        # Auto-flag for human review when user reports incorrect answer
+        if body.feedback_type == "incorrect":
+            from sqlalchemy import select as sa_select_fb
+
+            # Fetch the reported assistant message and the preceding user question
+            question_text = ""
+            answer_text = ""
+            if body.message_id:
+                msg_result = await session.execute(
+                    sa_select_fb(ChatHistory).where(ChatHistory.id == body.message_id)
+                )
+                reported_msg = msg_result.scalar_one_or_none()
+                if reported_msg:
+                    answer_text = reported_msg.content[:2000]
+                    # Get the last user message before this assistant message
+                    user_msg_result = await session.execute(
+                        sa_select_fb(ChatHistory)
+                        .where(
+                            ChatHistory.session_id == body.session_id,
+                            ChatHistory.role == "user",
+                            ChatHistory.id < body.message_id,
+                        )
+                        .order_by(ChatHistory.id.desc())
+                        .limit(1)
+                    )
+                    user_msg = user_msg_result.scalar_one_or_none()
+                    if user_msg:
+                        question_text = user_msg.content
+
+            flag = FlaggedConversation(
+                session_id=body.session_id,
+                message_id=body.message_id,
+                question=question_text,
+                answer=answer_text,
+                flag_reason="user_reported",
+                status="pending",
+            )
+            session.add(flag)
+            logger.info(f"Auto-flagged for review: session={body.session_id}, message_id={body.message_id}")
+
         await session.commit()
 
         logger.info(f"Feedback received: session={body.session_id}, type={body.feedback_type}")

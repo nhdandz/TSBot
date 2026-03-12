@@ -198,3 +198,25 @@ class Feedback(Base):
     )  # 'helpful', 'not_helpful', 'incorrect', 'incomplete'
     comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class FlaggedConversation(Base):
+    """Conversations flagged for human review (Human-in-the-Loop)."""
+
+    __tablename__ = "flagged_conversations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    message_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("chat_history.id"), nullable=True
+    )
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # 'user_reported' | 'low_confidence' | 'faithfulness_fail' | 'error'
+    flag_reason: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    # 'pending' | 'reviewed' | 'resolved' | 'dismissed'
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
+    admin_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
