@@ -1,0 +1,178 @@
+[
+  {
+    "question": "Điểm chuẩn Học viện Kỹ thuật Quân sự năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' AND nam = 2024 ORDER BY ten_nganh, ma_khoi, khu_vuc LIMIT 100;"
+  },
+  {
+    "question": "Điểm chuẩn Học viện Hải quân năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien hai quan%' AND nam = 2024 ORDER BY ten_nganh, ma_khoi, khu_vuc LIMIT 100;"
+  },
+  {
+    "question": "Điểm chuẩn Trường Sĩ quan Lục quân 1 năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%si quan luc quan 1%' AND nam = 2024 ORDER BY ten_nganh, ma_khoi, khu_vuc LIMIT 100;"
+  },
+  {
+    "question": "Điểm chuẩn Học viện Phòng không Không quân năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%phong khong khong quan%' AND nam = 2024 ORDER BY ten_nganh, ma_khoi, khu_vuc LIMIT 100;"
+  },
+  {
+    "question": "Điểm chuẩn nữ Học viện Kỹ thuật Quân sự qua các năm",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' AND gioi_tinh = 'nu' ORDER BY nam ASC, ten_nganh, khu_vuc LIMIT 100;"
+  },
+  {
+    "question": "Điểm chuẩn nữ Học viện Hải quân qua các năm",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien hai quan%' AND gioi_tinh = 'nu' ORDER BY nam ASC, ten_nganh, khu_vuc LIMIT 100;"
+  },
+  {
+    "question": "Điểm chuẩn nam miền bắc HVKTQS năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' AND gioi_tinh = 'nam' AND khu_vuc = 'mien_bac' AND nam = 2024 ORDER BY ten_nganh, ma_khoi LIMIT 100;"
+  },
+  {
+    "question": "Điểm chuẩn nam miền nam HVKTQS năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' AND gioi_tinh = 'nam' AND khu_vuc = 'mien_nam' AND nam = 2024 ORDER BY ten_nganh, ma_khoi LIMIT 100;"
+  },
+  {
+    "question": "Điểm chuẩn nữ miền bắc các trường quân đội năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE gioi_tinh = 'nu' AND khu_vuc = 'mien_bac' AND nam = 2024 ORDER BY ten_truong, ten_nganh, ma_khoi LIMIT 150;"
+  },
+  {
+    "question": "Điểm chuẩn nữ miền nam các trường năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE gioi_tinh = 'nu' AND khu_vuc = 'mien_nam' AND nam = 2024 ORDER BY ten_truong, ten_nganh, ma_khoi LIMIT 150;"
+  },
+  {
+    "question": "Điểm chuẩn khối A00 HVKTQS năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' AND ma_khoi = 'A00' AND nam = 2024 ORDER BY ten_nganh, khu_vuc LIMIT 100;"
+  },
+  {
+    "question": "Điểm chuẩn khối A01 Học viện Kỹ thuật Quân sự 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' AND ma_khoi = 'A01' AND nam = 2024 ORDER BY ten_nganh, khu_vuc LIMIT 100;"
+  },
+  {
+    "question": "So sánh điểm chuẩn HVKTQS và HVHQ năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE (ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' OR ten_khong_dau ILIKE '%hoc vien hai quan%') AND nam = 2024 ORDER BY ten_truong, ten_nganh, ma_khoi, khu_vuc LIMIT 200;"
+  },
+  {
+    "question": "So sánh điểm chuẩn Trường Sĩ quan Lục quân 1 và Sĩ quan Lục quân 2 năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE (ten_khong_dau ILIKE '%si quan luc quan 1%' OR ten_khong_dau ILIKE '%si quan luc quan 2%') AND nam = 2024 ORDER BY ten_truong, ten_nganh, ma_khoi LIMIT 200;"
+  },
+  {
+    "question": "So sánh điểm chuẩn nam và nữ HVKTQS năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' AND nam = 2024 ORDER BY ten_nganh, ma_khoi, gioi_tinh, khu_vuc LIMIT 200;"
+  },
+  {
+    "question": "Điểm chuẩn HVKTQS qua các năm 2023 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' ORDER BY nam ASC, ten_nganh, ma_khoi, khu_vuc LIMIT 200;"
+  },
+  {
+    "question": "Xu hướng điểm chuẩn Học viện Hải quân qua các năm",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien hai quan%' ORDER BY nam ASC, ten_nganh, ma_khoi, khu_vuc LIMIT 200;"
+  },
+  {
+    "question": "Diễn biến điểm chuẩn Trường Sĩ quan Lục quân 1 qua 2 năm",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%si quan luc quan 1%' ORDER BY nam ASC, ten_nganh, ma_khoi, khu_vuc LIMIT 200;"
+  },
+  {
+    "question": "Với 26 điểm tôi có đỗ Học viện Kỹ thuật Quân sự không",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' AND nam = 2024 ORDER BY ten_nganh, ma_khoi, khu_vuc LIMIT 100;"
+  },
+  {
+    "question": "26 điểm có vào được Học viện Hải quân không",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien hai quan%' AND nam = 2024 ORDER BY ten_nganh, ma_khoi, khu_vuc LIMIT 100;"
+  },
+  {
+    "question": "Với 25.5 điểm khối A00 tôi có thể vào trường nào",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE diem_chuan <= 25.5 AND ma_khoi = 'A00' AND nam = 2024 ORDER BY diem_chuan DESC, ten_truong LIMIT 50;"
+  },
+  {
+    "question": "Điểm 24 khối A01 vào trường quân đội nào được",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE diem_chuan <= 24 AND ma_khoi = 'A01' AND nam = 2024 ORDER BY diem_chuan DESC, ten_truong LIMIT 50;"
+  },
+  {
+    "question": "Điểm chuẩn ngành Công nghệ thông tin HVKTQS năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' AND ten_nganh_khong_dau ILIKE '%cong nghe thong tin%' AND nam = 2024 ORDER BY ma_khoi, khu_vuc LIMIT 50;"
+  },
+  {
+    "question": "Điểm chuẩn ngành Kỹ thuật thông tin liên lạc năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_nganh_khong_dau ILIKE '%ky thuat thong tin lien lac%' AND nam = 2024 ORDER BY ten_truong, ma_khoi, khu_vuc LIMIT 100;"
+  },
+  {
+    "question": "Điểm chuẩn ngành Điện tử viễn thông các trường quân đội 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_nganh_khong_dau ILIKE '%dien tu vien thong%' AND nam = 2024 ORDER BY ten_truong, ma_khoi, khu_vuc LIMIT 100;"
+  },
+  {
+    "question": "Chỉ tiêu tuyển sinh Học viện Kỹ thuật Quân sự năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' AND nam = 2024 ORDER BY ten_nganh, ma_khoi, khu_vuc LIMIT 100;"
+  },
+  {
+    "question": "Chỉ tiêu nữ các trường quân đội năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE gioi_tinh = 'nu' AND nam = 2024 ORDER BY ten_truong, ten_nganh, ma_khoi LIMIT 200;"
+  },
+  {
+    "question": "Tất cả điểm chuẩn năm 2024 các trường quân đội",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE nam = 2024 ORDER BY ten_truong, ten_nganh, ma_khoi, khu_vuc LIMIT 500;"
+  },
+  {
+    "question": "Điểm chuẩn tất cả các trường năm 2023",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE nam = 2023 ORDER BY ten_truong, ten_nganh, ma_khoi, khu_vuc LIMIT 500;"
+  },
+  {
+    "question": "Trường nào có điểm chuẩn cao nhất năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE nam = 2024 ORDER BY diem_chuan DESC LIMIT 20;"
+  },
+  {
+    "question": "Trường quân đội nào có điểm chuẩn thấp nhất năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE nam = 2024 ORDER BY diem_chuan ASC LIMIT 20;"
+  },
+  {
+    "question": "Điểm chuẩn nam miền bắc các trường năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE gioi_tinh = 'nam' AND khu_vuc = 'mien_bac' AND nam = 2024 ORDER BY ten_truong, ten_nganh, ma_khoi LIMIT 300;"
+  },
+  {
+    "question": "Điểm chuẩn nam miền nam tất cả trường năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE gioi_tinh = 'nam' AND khu_vuc = 'mien_nam' AND nam = 2024 ORDER BY ten_truong, ten_nganh, ma_khoi LIMIT 300;"
+  },
+  {
+    "question": "So sánh điểm chuẩn miền bắc và miền nam HVKTQS năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' AND nam = 2024 ORDER BY ten_nganh, ma_khoi, khu_vuc, gioi_tinh LIMIT 200;"
+  },
+  {
+    "question": "Điểm chuẩn HVKTQS nam miền bắc khối A00 năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' AND gioi_tinh = 'nam' AND khu_vuc = 'mien_bac' AND ma_khoi = 'A00' AND nam = 2024 ORDER BY ten_nganh LIMIT 50;"
+  },
+  {
+    "question": "Điểm chuẩn nữ miền bắc khối A01 HVKTQS năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' AND gioi_tinh = 'nu' AND khu_vuc = 'mien_bac' AND ma_khoi = 'A01' AND nam = 2024 ORDER BY ten_nganh LIMIT 50;"
+  },
+  {
+    "question": "Trường Sĩ quan Phòng hóa có điểm chuẩn bao nhiêu năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%phong hoa%' AND nam = 2024 ORDER BY ten_nganh, ma_khoi, khu_vuc LIMIT 100;"
+  },
+  {
+    "question": "Học viện Quân y điểm chuẩn năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%quan y%' AND nam = 2024 ORDER BY ten_nganh, ma_khoi, khu_vuc LIMIT 100;"
+  },
+  {
+    "question": "Điểm chuẩn ngành quân y năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_nganh_khong_dau ILIKE '%y khoa%' AND nam = 2024 ORDER BY ten_truong, ma_khoi, khu_vuc LIMIT 100;"
+  },
+  {
+    "question": "So sánh điểm chuẩn nam nữ Học viện Quân y năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%quan y%' AND nam = 2024 ORDER BY ten_nganh, ma_khoi, gioi_tinh, khu_vuc LIMIT 200;"
+  },
+  {
+    "question": "Điểm chuẩn năm 2023 Học viện Kỹ thuật Quân sự",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' AND nam = 2023 ORDER BY ten_nganh, ma_khoi, khu_vuc LIMIT 100;"
+  },
+  {
+    "question": "Điểm chuẩn năm 2023 Học viện Hải quân",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien hai quan%' AND nam = 2023 ORDER BY ten_nganh, ma_khoi, khu_vuc LIMIT 100;"
+  },
+  {
+    "question": "Biểu đồ điểm chuẩn HVKTQS theo năm",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE ten_khong_dau ILIKE '%hoc vien ky thuat quan su%' ORDER BY nam ASC, ten_nganh, ma_khoi, khu_vuc LIMIT 200;"
+  },
+  {
+    "question": "Biểu đồ so sánh điểm chuẩn các trường quân đội năm 2024",
+    "sql": "SELECT nam, ten_truong, ten_nganh, ma_khoi, gioi_tinh, khu_vuc, diem_chuan, chi_tieu FROM view_tra_cuu_diem WHERE nam = 2024 ORDER BY ten_truong, ten_nganh, ma_khoi LIMIT 300;"
+  }
+]

@@ -12,8 +12,9 @@ set -e
 MAIN_MODEL="${VLLM_MAIN_MODEL:-Qwen/Qwen2.5-7B-Instruct}"
 GRADER_MODEL="${VLLM_GRADER_MODEL:-Qwen/Qwen2.5-1.5B-Instruct}"
 PORT="${VLLM_PORT:-8001}"
-GPU_MEMORY_UTIL="${GPU_MEMORY_UTIL:-0.85}"    # Dùng 85% VRAM A100
+GPU_MEMORY_UTIL="${GPU_MEMORY_UTIL:-0.90}"    # A100 80GB: dùng 90% (~72GB), model 14GB → ~58GB KV cache
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-128}"           # Số request xử lý song song tối đa (~50-100 concurrent users)
 TENSOR_PARALLEL="${TENSOR_PARALLEL:-1}"        # 1 GPU, tăng nếu có multi-GPU
 
 echo "Starting vLLM with model: $MAIN_MODEL on port $PORT"
@@ -34,7 +35,9 @@ docker run -d \
     --port 8000 \
     --gpu-memory-utilization "$GPU_MEMORY_UTIL" \
     --max-model-len "$MAX_MODEL_LEN" \
+    --max-num-seqs "$MAX_NUM_SEQS" \
     --tensor-parallel-size "$TENSOR_PARALLEL" \
+    --enable-chunked-prefill \
     --trust-remote-code \
     --served-model-name "$MAIN_MODEL" \
     --dtype float16

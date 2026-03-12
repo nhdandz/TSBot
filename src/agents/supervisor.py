@@ -145,6 +145,32 @@ Nếu là chào hỏi, hãy chào lại và giới thiệu bạn có thể giúp
 
 Trả lời ngắn gọn, thân thiện."""
 
+FOLLOWUP_RESOLVE_PROMPT = """Dựa vào lịch sử hội thoại, viết lại câu hỏi hiện tại thành câu hỏi đầy đủ, độc lập (không cần ngữ cảnh trước để hiểu).
+
+Lịch sử (5 tin nhắn gần nhất):
+{history}
+
+Câu hỏi hiện tại: "{current_query}"
+
+Nếu câu hỏi đã đầy đủ (không dùng đại từ như "trường đó", "năm ngoái", "thế còn"...) → trả về nguyên văn câu hỏi.
+Nếu câu hỏi cần ngữ cảnh → viết lại thành câu hoàn chỉnh.
+Chỉ trả về câu hỏi đã viết lại, không giải thích gì thêm."""
+
+
+def _is_hybrid_query(query: str) -> bool:
+    """Detect if query needs both SQL (score data) and RAG (regulations)."""
+    q = query.lower()
+    sql_kw = ["điểm", "diem", "chỉ tiêu", "chi tieu", "đỗ", "do duoc", "vào được", "vao duoc", "đủ điểm", "du diem"]
+    rag_kw = [
+        "hồ sơ", "ho so", "điều kiện", "dieu kien", "tiêu chuẩn", "tieu chuan",
+        "thủ tục", "thu tuc", "cần gì", "can gi", "chuẩn bị", "chuan bi",
+        "quy định", "quy dinh", "yêu cầu", "yeu cau", "sức khỏe", "suc khoe",
+        "giấy tờ", "giay to", "đăng ký", "dang ky",
+    ]
+    has_sql = any(kw in q for kw in sql_kw)
+    has_rag = any(kw in q for kw in rag_kw)
+    return has_sql and has_rag
+
 
 class SupervisorAgent:
     """Supervisor Agent for orchestrating the multi-agent system."""
@@ -248,6 +274,11 @@ class SupervisorAgent:
         query = state["current_query"]
         messages = state.get("messages", [])
         logger.debug(f"_route_node called, query: {query[:50]}...")
+
+        # Pre-check: hybrid query (needs both SQL score data AND RAG regulations)
+        if _is_hybrid_query(query):
+            logger.info("Pre-check: hybrid query detected → routing as 'both'")
+            return {"intent": "both", "agent_type": AgentType.SQL}
 
         # Pre-check: chart/trend queries always go to SQL agent
         _chart_kw = [
@@ -404,8 +435,13 @@ class SupervisorAgent:
             logger.info("Decision: clarify (needs_clarification=True)")
             return "clarify"
 
-        agent_type = state.get("agent_type")
+        # Hybrid: cần cả SQL lẫn RAG
         intent = state.get("intent")
+        if intent == "both":
+            logger.info("Decision: both (hybrid query → start with sql)")
+            return "both"
+
+        agent_type = state.get("agent_type")
 
         if agent_type == AgentType.SQL:
             logger.info(f"Decision: sql (intent={intent}, agent_type={agent_type})")
@@ -484,10 +520,19 @@ class SupervisorAgent:
 
         try:
             result = await self.rag_agent.process_query(query)
+            answer = result.get("answer", "")
+            sources = result.get("sources", [])
+
+            # Add disclaimer if RAG confidence is low
+            if answer and sources:
+                max_score = max((s.get("score", 1.0) for s in sources if isinstance(s, dict)), default=1.0)
+                if max_score < 0.60:
+                    answer = answer + "\n\n> ⚠️ *Lưu ý: Thông tin trên có thể chưa đầy đủ hoặc chưa được cập nhật. Vui lòng xác nhận lại với cơ quan tuyển sinh hoặc trực tiếp nhà trường có thẩm quyền.*"
+
             return {
                 "rag_result": result,
-                "response": result.get("answer"),
-                "sources": result.get("sources", []),
+                "response": answer,
+                "sources": sources,
             }
         except Exception as e:
             logger.error(f"RAG Agent error: {e}")
@@ -697,6 +742,52 @@ class SupervisorAgent:
             "needs_clarification": True,
         }
 
+    async def _resolve_followup(self, query: str, conversation_history: list[dict]) -> str:
+        """Rewrite follow-up query using conversation history for context resolution.
+
+        Only triggers when: history exists AND query contains anaphoric references.
+        """
+        if not conversation_history:
+            return query
+
+        # Only rewrite if query contains follow-up indicators
+        q_lower = query.lower().strip()
+        followup_indicators = [
+            "thế còn", "the con", "còn ", "con ", "vậy ", "vay ",
+            "năm ngoái", "nam ngoai", "năm đó", "nam do",
+            "trường đó", "truong do", "trường kia", "truong kia",
+            "ngành đó", "nganh do", "cái đó", "cai do",
+            "như thế nào", "nhu the nao", "thì sao", "thi sao",
+        ]
+        is_followup = (
+            len(q_lower) < 60 or  # Short query likely needs context
+            any(ind in q_lower for ind in followup_indicators)
+        )
+
+        if not is_followup:
+            return query
+
+        history_text = "\n".join([
+            f"{m['role'].upper()}: {m['content'][:200]}"
+            for m in conversation_history[-6:]
+        ])
+
+        prompt = FOLLOWUP_RESOLVE_PROMPT.format(
+            history=history_text,
+            current_query=query,
+        )
+
+        try:
+            resolved = await self.llm_service.generate(prompt=prompt, use_grader=False)
+            if resolved and len(resolved.strip()) > 5:
+                resolved = resolved.strip().strip('"').strip("'")
+                logger.info(f"Follow-up rewrite: '{query}' → '{resolved[:80]}'")
+                return resolved
+        except Exception as e:
+            logger.warning(f"Follow-up resolution failed: {e}")
+
+        return query
+
     async def process(
         self,
         query: str,
@@ -724,10 +815,13 @@ class SupervisorAgent:
         ]
         messages = prior_messages + [{"role": "user", "content": query}]
 
+        # Resolve follow-up references using conversation history
+        resolved_query = await self._resolve_followup(query, conversation_history or [])
+
         # Initialize state
         initial_state: ConversationState = {
             "messages": messages,
-            "current_query": query,
+            "current_query": resolved_query,
             "intent": None,
             "agent_type": None,
             "sql_result": None,
@@ -783,9 +877,12 @@ class SupervisorAgent:
         ]
         messages = prior_messages + [{"role": "user", "content": query}]
 
+        # Resolve follow-up references using conversation history
+        resolved_query = await self._resolve_followup(query, conversation_history or [])
+
         initial_state: ConversationState = {
             "messages": messages,
-            "current_query": query,
+            "current_query": resolved_query,
             "intent": None,
             "agent_type": None,
             "sql_result": None,

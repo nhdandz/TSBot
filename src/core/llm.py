@@ -84,7 +84,7 @@ class LLMService:
             "base_url": self.base_url,
             "api_key": settings.vllm_api_key,
             "model": model,
-            "temperature": temperature,
+            "temperature": temperature
         }
         if top_p is not None:
             kwargs["top_p"] = top_p
