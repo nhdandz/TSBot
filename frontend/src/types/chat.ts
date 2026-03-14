@@ -24,6 +24,7 @@ export interface ChatMessage {
   sources?: Source[]
   intent?: string
   chart_data?: ChartData
+  _fromStreaming?: boolean
 }
 
 export interface Source {

@@ -28,6 +28,7 @@ interface ChatState {
   setStreamingContent: (content: string) => void
   appendStreamingContent: (chunk: string) => void
   clearStreaming: () => void
+  commitStreamingMessage: (message: ChatMessage) => void
 }
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -78,4 +79,12 @@ export const useChatStore = create<ChatState>((set) => ({
     set((state) => ({ streamingContent: state.streamingContent + chunk })),
 
   clearStreaming: () => set({ streamingContent: '' }),
+
+  commitStreamingMessage: (message) =>
+    set((state) => ({
+      messages: [...state.messages, { ...message, _fromStreaming: true }],
+      streamingContent: '',
+      isLoading: false,
+      isTyping: false,
+    })),
 }))

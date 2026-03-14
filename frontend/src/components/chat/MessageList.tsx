@@ -60,7 +60,7 @@ export function MessageList({ messages, isTyping, streamingContent, onSuggestion
       {messages.map((message, index) => (
         <div
           key={index}
-          className={`animate-message-in flex gap-3 ${
+          className={`${message._fromStreaming ? '' : 'animate-message-in'} flex gap-3 ${
             message.role === 'user' ? 'justify-end' : 'justify-start'
           }`}
         >

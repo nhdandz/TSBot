@@ -33,6 +33,7 @@ export default function ChatPage() {
     setError,
     appendStreamingContent,
     clearStreaming,
+    commitStreamingMessage,
     resetSession,
   } = useChatStore()
 
@@ -78,7 +79,6 @@ export default function ChatPage() {
         if (event.type === 'meta') {
           finalIntent = event.intent
           if (event.sources?.length) finalSources = event.sources
-          setIsTyping(false)
         } else if (event.type === 'token') {
           appendStreamingContent(event.content ?? '')
         } else if (event.type === 'done') {
@@ -88,7 +88,7 @@ export default function ChatPage() {
         }
       }
 
-      // Commit streaming content as final message
+      // Commit streaming content as final message (atomic: add message + clear streaming in one render)
       const finalContent = useChatStore.getState().streamingContent
       const assistantMessage: ChatMessage = {
         role: 'assistant',
@@ -98,7 +98,7 @@ export default function ChatPage() {
         intent: finalIntent,
         chart_data: finalChartData,
       }
-      addMessage(assistantMessage)
+      commitStreamingMessage(assistantMessage)
     } catch (error: any) {
       setError(error.message || 'Lỗi khi gửi tin nhắn')
       toast({
